@@ -1,0 +1,61 @@
+[pg] stopped pid=3348
+[pg] stopped pid=7336
+[pg] stopped pid=9372
+[pg] stopped pid=8508
+[pg] stopped pid=22412
+[pg] stopped pid=32420
+[pg] stop: ERROR: The process with PID 9700 (child process of PID 31036) could not be terminated.
+Reason: There is no running instance of the task.
+ERROR: The process with PID 27324 (child process of PID 31036) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 31640 (child process of PID 31036) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 27780 (child process of PID 31036) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 29604 (child process of PID 31036) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 30456 (child process of PID 31036) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 29952 (child process of PID 31036) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 22236 (child process of PID 31036) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 19368 (child process of PID 31036) could not be terminated.
+Reason: There is no running instance of the task.
+ERROR: The process with PID 28408 (child process of PID 31036) could not be terminated.
+Reason: The operation attempted is not supported.
+[pg] stopped pid=12468
+[pg] stop: ERROR: The process with PID 14444 (child process of PID 29492) could not be terminated.
+Reason: There is no running instance of the task.
+ERROR: The process with PID 31832 (child process of PID 29492) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 17976 (child process of PID 29492) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 30488 (child process of PID 29492) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 30612 (child process of PID 29492) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 21744 (child process of PID 29492) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 28412 (child process of PID 29492) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 4208 (child process of PID 29492) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 29448 (child process of PID 29492) could not be terminated.
+Reason: The operation attempted is not supported.
+[pg] stop: ERROR: The process with PID 32728 (child process of PID 26412) could not be terminated.
+Reason: There is no running instance of the task.
+ERROR: The process with PID 28368 (child process of PID 26412) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 26264 (child process of PID 26412) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 29024 (child process of PID 26412) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 12572 (child process of PID 26412) could not be terminated.
+Reason: The operation attempted is not supported.
+ERROR: The process with PID 18488 (child process of PID 26412) could not be terminated.
+Reason: The operation attempted is not supported.
+[pg] stopped pid=25380
+[pg] stopped pid=23068
+[pg] stopped pid=25824
+[pg] stopped pid=13732
