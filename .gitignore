@@ -1,0 +1,26 @@
+# node_modules is VENDORED in this project (fully local/offline) — do NOT ignore.
+# node_modules/
+dist/
+build/
+out/
+*.local
+# .env holds local dev secrets (port 5433) — keep ignored, .env.example is the template.
+.env
+!.env.example
+prisma/*.db
+prisma/*.db-journal
+*.sqlite
+*.sqlite-journal
+apps/web/dist/
+apps/web/.vite/
+apps/api/dist/
+backups/
+uploads/
+# Local tooling (large binaries) — keep node binaries, ignore caches/logs/data.
+_tools/npm-cache/
+_tools/pgsql/data/
+_tools/pgsql/*.log
+_tools/pgsql/*.pid
+F:/مداد/pg-binaries.zip
+.DS_Store
+Thumbs.db

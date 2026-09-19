@@ -1,0 +1,44 @@
+{
+  "name": "medad-cash",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Medad — Library accounting system (single branch day-one, multi-branch/multi-tenant ready). Strict double-entry, append-only ledger.",
+  "packageManager": "npm@10.9.8",
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "packages/shared-types"
+  ],
+  "scripts": {
+    "pg:start": "node _tools/pg-run.js start",
+    "pg:stop": "node _tools/pg-run.js stop",
+    "pg:status": "node _tools/pg-run.js status",
+    "db:migrate": "apps/api/node_modules/.bin/prisma migrate deploy --schema apps/api/prisma/schema.prisma",
+    "db:seed": "ts-node --transpile-only apps/api/prisma/seed.ts",
+    "db:setup": "npm run pg:start && npm run db:migrate && npm run db:seed",
+    "dev:api": "npm run start:dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "build": "npm run build -w packages/shared-types && npm run build -w apps/api && npm run build -w apps/web",
+    "lint": "npm run lint -w apps/api & npm run lint -w apps/web & npm run lint -w packages/shared-types",
+    "typecheck": "npm run typecheck -w apps/api & npm run typecheck -w apps/web & npm run typecheck -w packages/shared-types",
+    "test": "npm run test -w apps/api",
+    "test:ledger": "npm run test:ledger -w apps/api",
+    "prisma:migrate": "npm run prisma:migrate -w apps/api",
+    "prisma:seed": "npm run prisma:seed -w apps/api"
+  },
+  "engines": {
+    "node": ">=20.11 <23"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^3.0.3",
+    "embedded-postgres": "^18.4.0-beta.17",
+    "pg": "^8.23.0",
+    "typescript-eslint": "^8.70.0"
+  },
+  "dependencies": {
+    "@esbuild/win32-x64": "^0.21.5",
+    "@prisma/client": "^5.22.0",
+    "better-sqlite3": "^11.10.0"
+  }
+}

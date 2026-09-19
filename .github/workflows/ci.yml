@@ -1,0 +1,21 @@
+name: medad-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm run build -w packages/shared-types
+      - run: npm run typecheck -w packages/shared-types
+      - run: npm run typecheck -w apps/api
+      - run: npm run typecheck -w apps/web
+      - run: npm run test:ledger -w apps/api

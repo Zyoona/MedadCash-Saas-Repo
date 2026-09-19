@@ -1,0 +1,9 @@
+// ─── Medad shared contracts ───
+// Single source of truth for DTOs / enums / money + invoice math.
+// All money: NUMERIC(18,2) in DB, integer Agora (cents) in code. No Float.
+
+export * from './enums.js';
+export * from './money.js';
+export * from './invoice.js';
+export * from './ledger.js';
+export * from './schemas.js';

@@ -1,0 +1,725 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Multi-tenancy base ───
+// Every business table carries tenantId. SQLite-local mirrors this schema 1:1.
+
+model Tenant {
+  id        String    @id @default(uuid())
+  name      String
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  branches  Branch[]
+  users     User[]
+  accounts  Account[]
+  bankAccounts BankAccount[]
+  products  Product[]
+  customers Customer[]
+  suppliers Supplier[]
+  settings  Setting[]
+  fiscalYears FiscalYear[]
+  journalEntries JournalEntry[]
+
+  @@map("tenants")
+}
+
+model Branch {
+  id        String    @id @default(uuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  name      String
+  address   String?
+  phone     String?
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  users     User[]
+  customers Customer[]
+  journalEntries JournalEntry[]
+  invoices  Invoice[]
+  purchases Purchase[]
+  shifts    Shift[]
+  stockCounts StockCount[]
+  transfersOut StockTransfer[] @relation("TransferFrom")
+  transfersIn  StockTransfer[] @relation("TransferTo")
+  branchStocks BranchStock[]
+  productBranches ProductBranch[]
+  settings  Setting[]
+
+  @@index([tenantId])
+  @@map("branches")
+}
+
+model User {
+  id                  String   @id @default(uuid())
+  tenantId            String
+  tenant              Tenant   @relation(fields: [tenantId], references: [id])
+  branchId            String?
+  branch              Branch?  @relation(fields: [branchId], references: [id])
+  email               String
+  passwordHash        String
+  name                String
+  role                String   // manager | accountant | cashier | inventory (seeded, extendable)
+  permissionsOverride Json?    // { "override_credit_limit": true, "sales.post": false, ... }
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  deletedAt           DateTime?
+
+  auditLogs AuditLog[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+// ─── Catalog (central, tenant-level; price/qty per branch) ───
+
+model Category {
+  id        String    @id @default(uuid())
+  tenantId  String
+  name      String
+  parentId  String?
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+  products  Product[]
+
+  @@index([tenantId])
+  @@map("categories")
+}
+
+model Brand {
+  id        String    @id @default(uuid())
+  tenantId  String
+  name      String
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+  products  Product[]
+
+  @@index([tenantId])
+  @@map("brands")
+}
+
+model Unit {
+  id        String    @id @default(uuid())
+  tenantId  String
+  name      String    // قطعة، علبة، كرتونة...
+  symbol    String?
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+  productUnits ProductUnit[]
+
+  @@index([tenantId])
+  @@map("units")
+}
+
+model Product {
+  id          String    @id @default(uuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id])
+  brandId     String?
+  brand       Brand?    @relation(fields: [brandId], references: [id])
+  baseUnitId  String?
+  name        String
+  sku         String?
+  isContainer Boolean   @default(false) // true when converted simple→variants: parent not sellable
+  lowStockDefault Int   @default(0)
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  variants       ProductVariant[]
+  units          ProductUnit[]
+  costComponents CostComponent[]
+  branchData     ProductBranch[]
+
+  @@index([tenantId])
+  @@map("products")
+}
+
+model ProductVariant {
+  id        String    @id @default(uuid())
+  tenantId  String
+  productId String
+  product   Product   @relation(fields: [productId], references: [id])
+  name      String    // e.g. أحمر / كبير
+  barcode   String
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  branchStocks BranchStock[]
+  invoiceLines InvoiceLine[]
+  purchaseLines PurchaseLine[]
+
+  @@unique([tenantId, barcode])
+  @@index([productId])
+  @@map("product_variants")
+}
+
+model ProductUnit {
+  id        String   @id @default(uuid())
+  tenantId  String
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  unitId    String
+  unit      Unit     @relation(fields: [unitId], references: [id])
+  factor    Int      // manual: how many base units in this unit
+  barcode   String?
+
+  @@index([productId])
+  @@map("product_units")
+}
+
+model CostComponent {
+  id        String   @id @default(uuid())
+  tenantId  String
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  label     String
+  amount    Decimal  @db.Decimal(18, 2)
+
+  @@index([productId])
+  @@map("cost_components")
+}
+
+// Price/cost per branch; qty is DERIVED from BranchStock (never stored here).
+model ProductBranch {
+  id        String   @id @default(uuid())
+  tenantId  String
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  price     Decimal  @db.Decimal(18, 2) @default(0)
+  cost      Decimal  @db.Decimal(18, 2) @default(0) // auto = sum(cost_components) unless overridden
+  minAlert  Int?
+
+  @@unique([branchId, productId])
+  @@map("product_branch")
+}
+
+model BranchStock {
+  id        String   @id @default(uuid())
+  tenantId  String
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  productId String
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  qty       Int      @default(0) // negative allowed with warning + audit
+
+  @@unique([branchId, productId, variantId])
+  @@index([branchId])
+  @@map("branch_stock")
+}
+
+// ─── Parties ───
+
+model Customer {
+  id              String    @id @default(uuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id])
+  branchId        String
+  branch          Branch    @relation(fields: [branchId], references: [id])
+  name            String
+  phone           String?
+  openingBalance  Decimal   @db.Decimal(18, 2) @default(0)
+  openingDate     DateTime?
+  creditLimit     Decimal   @db.Decimal(18, 2) @default(0)
+  paymentTerms    String?
+  isCashDefault   Boolean   @default(false) // زبون نقدي افتراضي لكل فرع
+  createdAt       DateTime  @default(now())
+  deletedAt       DateTime?
+
+  invoices Invoice[]
+
+  @@index([tenantId, branchId])
+  @@map("customers")
+}
+
+model Supplier {
+  id              String    @id @default(uuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id])
+  name            String
+  phone           String?
+  openingBalance  Decimal   @db.Decimal(18, 2) @default(0)
+  openingDate     DateTime?
+  createdAt       DateTime  @default(now())
+  deletedAt       DateTime?
+
+  purchases Purchase[]
+
+  @@index([tenantId])
+  @@map("suppliers")
+}
+
+// ─── Chart of accounts + fiscal year ───
+
+model Account {
+  id        String    @id @default(uuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  code      String    // 1000 صندوق، 1100 بنك...
+  name      String
+  type      String    // asset | liability | equity | revenue | expense
+  isClosed  Boolean   @default(false) // closed account rejects new postings
+  parentId  String?
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  lines JournalLine[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("accounts")
+}
+
+model FiscalYear {
+  id        String    @id @default(uuid())
+  tenantId  String
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  name      String    // 2026
+  startDate DateTime
+  endDate   DateTime
+  isClosed  Boolean   @default(false)
+  createdAt DateTime @default(now())
+
+  entries JournalEntry[]
+
+  @@index([tenantId])
+  @@map("fiscal_years")
+}
+
+// ─── Bank accounts (الحسابات البنكية) ───
+// كل حساب بنكي مرتبط بحساب GL من دليل الحسابات (asset): أول بنك يتبنى 1100، واللاحقة 1101+.
+// الرصيد يُشتق دائماً من دفتر القيود (Append-only) — لا يُخزن رصيد هنا أبداً.
+
+model BankAccount {
+  id            String   @id @default(uuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  glAccountCode String   // linked chart-of-accounts code (asset) — ثابت بعد الإنشاء
+  bankName      String   // اسم البنك
+  accountLabel  String?  // وصف الحساب (جاري/ودائع/رواتب...)
+  accountNumber String?
+  iban          String?
+  currency      String   @default("ILS")
+  notes         String?
+  isActive      Boolean  @default(true) // تظهر في خيارات الدفع؛ يمكن تعطيلها عند إغلاق الحساب
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+
+  @@unique([tenantId, glAccountCode])
+  @@index([tenantId, isActive])
+  @@map("bank_accounts")
+}
+
+// ─── APPEND-ONLY ledger (NO update/delete via API; reversal only) ───
+
+model JournalEntry {
+  id              String     @id @default(uuid())
+  tenantId        String
+  tenant          Tenant     @relation(fields: [tenantId], references: [id])
+  branchId        String
+  branch          Branch     @relation(fields: [branchId], references: [id])
+  fiscalYearId    String
+  fiscalYear      FiscalYear @relation(fields: [fiscalYearId], references: [id])
+  date            DateTime
+  sourceType      String     // sale | purchase | collection | ... | reversal
+  sourceId        String
+  memo            String?
+  reversesEntryId String?
+  createdAt       DateTime   @default(now())
+
+  lines JournalLine[]
+
+  @@index([tenantId, branchId])
+  @@index([sourceType, sourceId])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id         String       @id @default(uuid())
+  entryId    String
+  entry      JournalEntry @relation(fields: [entryId], references: [id])
+  accountId  String
+  account    Account      @relation(fields: [accountId], references: [id])
+  debit      Decimal      @db.Decimal(18, 2)
+  credit     Decimal      @db.Decimal(18, 2)
+  customerId String?
+  supplierId String?
+  memo       String?
+
+  @@index([entryId])
+  @@index([accountId])
+  @@map("journal_lines")
+}
+
+// ─── Purchases (stock moves ONLY on received) ───
+
+model Purchase {
+  id         String   @id @default(uuid())
+  tenantId   String
+  branchId   String
+  branch     Branch   @relation(fields: [branchId], references: [id])
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+  status     String   @default("ordered") // ordered | pending | received
+  refNo      String?
+  discountAgora Int   @default(0)
+  taxRateBps Int      @default(0)
+  taxAgora   Int      @default(0)
+  notes      String?
+  createdAt  DateTime @default(now())
+  deletedAt  DateTime?
+
+  lines    PurchaseLine[]
+  payments SupplierPayment[]
+
+  @@index([tenantId, branchId])
+  @@map("purchases")
+}
+
+model PurchaseLine {
+  id                String         @id @default(uuid())
+  purchaseId        String
+  purchase          Purchase       @relation(fields: [purchaseId], references: [id])
+  variantId         String
+  variant           ProductVariant @relation(fields: [variantId], references: [id])
+  qty               Int
+  unitCostAgora     Int
+  lineDiscountAgora Int            @default(0)
+
+  @@index([purchaseId])
+  @@map("purchase_lines")
+}
+
+model SupplierPayment {
+  id          String   @id @default(uuid())
+  purchaseId  String
+  purchase    Purchase @relation(fields: [purchaseId], references: [id])
+  accountCode String   // cash/bank account code paid from
+  amount      Decimal  @db.Decimal(18, 2)
+  createdAt   DateTime @default(now())
+
+  @@map("supplier_payments")
+}
+
+// ─── Sales / POS ───
+
+model Invoice {
+  id                    String   @id @default(uuid())
+  tenantId              String
+  branchId              String
+  branch                Branch   @relation(fields: [branchId], references: [id])
+  shiftId               String?
+  shift                 Shift?   @relation(fields: [shiftId], references: [id])
+  customerId            String
+  customer              Customer @relation(fields: [customerId], references: [id])
+  refNo                 String?
+  status                String   @default("posted") // draft | posted | void
+  invoiceDiscountAgora  Int      @default(0)
+  createdAt             DateTime @default(now())
+  deletedAt             DateTime?
+
+  lines    InvoiceLine[]
+  payments InvoicePayment[]
+
+  @@index([tenantId, branchId])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id                        String          @id @default(uuid())
+  invoiceId                 String
+  invoice                   Invoice         @relation(fields: [invoiceId], references: [id])
+  productId                 String?
+  variantId                 String?
+  variant                   ProductVariant? @relation(fields: [variantId], references: [id])
+  qty                       Int
+  unitPriceAgora            Int
+  lineDiscountAgora         Int             @default(0)
+  invoiceDiscountShareAgora Int             @default(0)
+  taxRateBps                Int             @default(0)
+  taxAgora                  Int             @default(0)
+  netAgora                  Int             @default(0)
+  costAgora                 Int             @default(0) // unit cost at sale time (for returns/COGS)
+
+  @@index([invoiceId])
+  @@map("invoice_lines")
+}
+
+model InvoicePayment {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+  method      String   // cash | bank | check | credit
+  accountCode String
+  amount      Decimal  @db.Decimal(18, 2) // negative = change returned in different method
+  createdAt   DateTime @default(now())
+
+  @@map("invoice_payments")
+}
+
+model SaleReturn {
+  id              String   @id @default(uuid())
+  tenantId        String
+  branchId        String
+  sourceInvoiceId String
+  restockingFeeAgora Int   @default(0)
+  refundMethod    String
+  refundAccountCode String
+  createdAt       DateTime @default(now())
+
+  lines SaleReturnLine[]
+
+  @@index([tenantId, branchId])
+  @@map("returns")
+}
+
+model SaleReturnLine {
+  id        String     @id @default(uuid())
+  returnId  String
+  ret       SaleReturn @relation(fields: [returnId], references: [id])
+  variantId String
+  qty       Int
+
+  @@map("return_lines")
+}
+
+model Quotation {
+  id                 String    @id @default(uuid())
+  tenantId           String
+  branchId           String
+  customerId         String?
+  expiryDate         DateTime
+  status             String    @default("open") // open | converted | expired | cancelled
+  convertedInvoiceId String?
+  createdAt          DateTime  @default(now())
+  deletedAt          DateTime?
+
+  lines QuotationLine[]
+
+  @@index([tenantId, branchId])
+  @@map("quotations")
+}
+
+model QuotationLine {
+  id          String    @id @default(uuid())
+  quotationId String
+  quotation   Quotation @relation(fields: [quotationId], references: [id])
+  variantId   String
+  qty         Int
+  unitPriceAgora Int
+
+  @@map("quotation_lines")
+}
+
+// ─── Inventory ops ───
+
+model StockTransfer {
+  id         String   @id @default(uuid())
+  tenantId   String
+  fromBranchId String
+  fromBranch Branch @relation("TransferFrom", fields: [fromBranchId], references: [id])
+  toBranchId String
+  toBranch   Branch @relation("TransferTo", fields: [toBranchId], references: [id])
+  status     String  @default("in_transit") // in_transit | received
+  createdAt  DateTime @default(now())
+
+  lines StockTransferLine[]
+
+  @@index([tenantId])
+  @@map("stock_transfers")
+}
+
+model StockTransferLine {
+  id         String        @id @default(uuid())
+  transferId String
+  transfer   StockTransfer @relation(fields: [transferId], references: [id])
+  variantId  String
+  qty        Int
+  costAgora  Int           @default(0) // valuation carried while in transit
+
+  @@map("stock_transfer_lines")
+}
+
+model StockCount {
+  id        String   @id @default(uuid())
+  tenantId  String
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  type      String   // initial | daily
+  notes     String?
+  createdAt DateTime @default(now())
+
+  lines StockCountLine[]
+
+  @@map("stock_counts")
+}
+
+model StockCountLine {
+  id         String     @id @default(uuid())
+  countId    String
+  count      StockCount @relation(fields: [countId], references: [id])
+  variantId  String
+  expectedQty Int
+  countedQty Int
+
+  @@map("stock_count_lines")
+}
+
+model Shift {
+  id              String    @id @default(uuid())
+  tenantId        String
+  branchId        String
+  branch          Branch    @relation(fields: [branchId], references: [id])
+  cashierId       String
+  openingAmount   Decimal   @db.Decimal(18, 2)
+  closingExpected Decimal?  @db.Decimal(18, 2)
+  closingActual   Decimal?  @db.Decimal(18, 2)
+  closedBy        String?
+  openedAt        DateTime  @default(now())
+  closedAt        DateTime?
+
+  invoices Invoice[]
+
+  @@index([tenantId, branchId])
+  @@map("shifts")
+}
+
+model Task {
+  id              String    @id @default(uuid())
+  tenantId        String
+  branchId        String?
+  customerId      String?
+  serviceProduct  String
+  deadline        DateTime?
+  status          String    @default("open")
+  createdAt       DateTime  @default(now())
+  deletedAt       DateTime?
+
+  @@index([tenantId])
+  @@map("tasks")
+}
+
+// ─── Sync / audit / settings ───
+
+model SyncOperation {
+  id        String    @id @default(uuid())
+  tenantId  String
+  branchId  String
+  deviceId  String
+  entity    String
+  entityId  String
+  op        String    // create | update | delete
+  payload   Json
+  lamport   Int       @default(0)
+  createdAt DateTime  @default(now())
+  appliedAt DateTime?
+
+  @@index([tenantId, branchId, deviceId])
+  @@index([entity, entityId])
+  @@map("sync_operations")
+}
+
+model SyncConflict {
+  id          String   @id @default(uuid())
+  tenantId    String
+  branchId    String
+  entity      String
+  entityId    String
+  localValue  Json
+  remoteValue Json
+  localDevice String
+  resolved    Boolean  @default(false)
+  resolution  Json?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, resolved])
+  @@map("sync_conflicts")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String
+  branchId  String?
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String   // create | update | delete | login | view | search | export | print
+  entity    String
+  entityId  String?
+  diff      Json?
+  ip        String?
+  device    String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, actorId])
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}
+
+model Setting {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id])
+  key       String   // tax_rate | fiscal_year_start | low_stock_default | drive_config ...
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, branchId, key])
+  @@map("settings")
+}
+
+// ─── Checks (شيكات برسم التحصيل / مدفوعة) ───
+
+model Check {
+  id          String    @id @default(uuid())
+  tenantId    String
+  branchId    String?
+  checkNumber String
+  direction   String    // in (من عميل) | out (إلى مورد)
+  accountCode String    @default("1200") // 1200 شيكات برسم التحصيل، 2200 شيكات مدفوعة
+  partyName   String?
+  customerId  String?
+  supplierId  String?
+  amount      Decimal   @db.Decimal(18, 2)
+  dueDate     DateTime
+  status      String    @default("pending") // pending | cleared | bounced
+  clearedAt   DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  @@index([tenantId, status])
+  @@index([dueDate])
+  @@map("checks")
+}
+
+// ─── Backup runs (سجل النسخ الاحتياطي) ───
+
+model BackupRun {
+  id         String    @id @default(uuid())
+  tenantId   String
+  provider   String    // local | drive
+  status     String    // success | failed
+  filePath   String?
+  sizeBytes  Int?
+  message    String?
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([tenantId, startedAt])
+  @@map("backup_runs")
+}
