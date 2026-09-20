@@ -62,4 +62,6 @@ Reason: The operation attempted is not supported.
 [pg] postgres is not running
 [pg] postgres is not running
 [pg] stopped pid=19976
+[pg] postgres is not running
 [pg] stopped pid=27356
+
