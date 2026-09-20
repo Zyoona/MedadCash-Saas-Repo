@@ -93,13 +93,15 @@ function makeDb(opts: {
     const branchId: string | undefined = where?.entry?.branchId;
     const from: Date | undefined = where?.entry?.date?.gte;
     const to: Date | undefined = where?.entry?.date?.lte;
+    const lt: Date | undefined = where?.entry?.date?.lt;
     const notIn: string[] = where?.entry?.sourceType?.notIn ?? [];
     return lines
       .filter((l) => !codes || codes.includes(l.accountCode))
       .filter((l) => !branchId || l.branchId === branchId)
       .filter((l) => !notIn.includes(l.sourceType))
       .filter((l) => !from || l.date >= from)
-      .filter((l) => !to || l.date <= to);
+      .filter((l) => !to || l.date <= to)
+      .filter((l) => !lt || l.date < lt);
   };
 
   const db: any = {
@@ -303,6 +305,20 @@ describe('Shifts — closing: مطابقة الدرج وترحيل التسلي�
     expect(res.expectedAgora).toBe(0);
     expect(res.entryId).toBeNull();
     expect(created.entries.length).toBe(0);
+  });
+
+  test('درج معاد الاستخدام: تسليم وردية سابقة محسوب ضمن الرصيد (لا عجز وهمي)', async () => {
+    const { db, created } = makeDb({
+      lines: [
+        line(DRAWER, 'shift_open', 20000, 0, -10), // عهدة وردية سابقة
+        line(DRAWER, 'shift_close', 0, 20000, -9), // تسليمها إلى الصندوق
+        ...DRAWER_LINES,
+      ],
+    });
+    const res: any = await build(db).close('t1', 'sh1', DRAWER_BALANCE, CASHIER);
+    expect(res.expectedAgora).toBe(DRAWER_BALANCE); // 20000 − 20000 + 62380
+    expect(res.diffAgora).toBe(0);
+    expect(created.entries.length).toBe(1);
   });
 
   test('ينشئ حساب 5310 تلقائياً عند غيابه ثم يرحل الفرق', async () => {

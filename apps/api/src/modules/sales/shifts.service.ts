@@ -66,7 +66,7 @@ export class ShiftsService {
     db: Db,
     tenantId: string,
     codes: string[],
-    opts: { branchId?: string; from?: Date; to?: Date; excludeSources?: string[] } = {},
+    opts: { branchId?: string; from?: Date; to?: Date; toExclusive?: Date; excludeSources?: string[] } = {},
   ) {
     const empty = { netAgora: 0, bySource: [] as { sourceType: string; amountAgora: number }[] };
     if (!codes.length) return empty;
@@ -75,7 +75,9 @@ export class ShiftsService {
         entry: {
           tenantId,
           ...(opts.branchId ? { branchId: opts.branchId } : {}),
-          ...(opts.from || opts.to ? { date: { ...(opts.from ? { gte: opts.from } : {}), ...(opts.to ? { lte: opts.to } : {}) } } : {}),
+          ...(opts.from || opts.to || opts.toExclusive
+            ? { date: { ...(opts.from ? { gte: opts.from } : {}), ...(opts.to ? { lte: opts.to } : {}), ...(opts.toExclusive ? { lt: opts.toExclusive } : {}) } }
+            : {}),
           ...(opts.excludeSources?.length ? { sourceType: { notIn: opts.excludeSources } } : {}),
         },
         account: { code: { in: codes } },
@@ -144,7 +146,9 @@ export class ShiftsService {
   private async reconcile(db: Db, tenantId: string, shift: Pick<ShiftWithDrawer, 'id' | 'branchId' | 'openedAt' | 'openingAmount' | 'drawer'>, at: Date): Promise<CashReconciliation> {
     const drawerAccountCode = shift.drawer?.glAccountCode ?? null;
     if (drawerAccountCode) {
-      const detail = await this.ledgerDetail(db, tenantId, [drawerAccountCode]);
+      // رصيد الدرج حتى لحظة الاحتساب (حصرًا) — قيد التسليم نفسه يُرحَّل بلحظة الإقفال فيُستبعد،
+      // بينما تبقى تسليمات الورديات السابقة للدرج نفسه محسوبة (الدرج يُعاد استخدامه).
+      const detail = await this.ledgerDetail(db, tenantId, [drawerAccountCode], { toExclusive: at });
       return { expectedAgora: detail.netAgora, drawerAccountCode, basis: 'drawer', movementsAgora: detail.netAgora, movementsBySource: detail.bySource };
     }
     const flow = await this.ledgerDetail(db, tenantId, [CASH], {
