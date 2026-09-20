@@ -431,6 +431,22 @@ describe('Shifts — report (تقرير الوردية)', () => {
     expect(res.warnings.length).toBe(0);
   });
 
+  test('وردية مغلقة: المتوقع المعاد احتسابه يطابق المخزن (قيد التسليم مستبعد زمنياً)', async () => {
+    const { db } = makeDb({
+      shifts: [makeShift({ closedAt: at(9), closingExpected: dec(DRAWER_BALANCE), closingActual: dec(DRAWER_BALANCE) })],
+      lines: [
+        ...DRAWER_LINES,
+        line(DRAWER, 'shift_close', 0, DRAWER_BALANCE, 9), // قيد التسليم بلحظة الإقفال
+        line(CASH, 'shift_close', DRAWER_BALANCE, 0, 9),
+      ],
+    });
+    const res: any = await build(db).report('t1', 'sh1');
+    expect(res.cash.recomputedExpectedAgora).toBe(DRAWER_BALANCE);
+    expect(res.cash.expectedAgora).toBe(DRAWER_BALANCE);
+    expect(res.cash.diffAgora).toBe(0);
+    expect(res.warnings.length).toBe(0);
+  });
+
   test('يكشف اختلاف المتوقع المخزن عن المعاد احتسابه من الدفتر', async () => {
     const { db } = makeDb({ shifts: [makeShift({ closedAt: at(9), closingExpected: dec(1000), closingActual: dec(1000) })] });
     const res: any = await build(db).report('t1', 'sh1');
