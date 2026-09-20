@@ -1,10 +1,14 @@
 // Local Postgres bootstrap (all inside MedadCash — no global installs).
 // Uses embedded-postgres binaries vendored in node_modules.
 // Data lives in _tools/pgsql/data, controlled port 5433 to avoid clashes.
+const path = require('path');
 const EmbeddedPostgres = require('embedded-postgres').default;
 
+// مسار بيانات Postgres نسبي للمشروع (مجلد _tools بجوار هذا الملف) بدلاً من مسار قرص ثابت.
+const DATA_DIR = path.join(__dirname, 'pgsql', 'data');
+
 const pg = new EmbeddedPostgres({
-  databaseDir: 'F:\\مداد\\MedadCash\\_tools\\pgsql\\data',
+  databaseDir: DATA_DIR,
   user: 'medad',
   password: 'medad',
   port: 5433,

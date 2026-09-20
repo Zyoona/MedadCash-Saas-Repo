@@ -6,9 +6,12 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const BIN = 'F:\\مداد\\MedadCash\\node_modules\\@embedded-postgres\\windows-x64\\native\\bin';
-const DATA = 'F:\\مداد\\MedadCash\\_tools\\pgsql\\data';
-const LOG = 'F:\\مداد\\MedadCash\\_tools\\pgsql\\postgres.log';
+// كل المسارات مشتقة من موقع هذا الملف (جذر المشروع = المجلد الأب لـ _tools)
+// حتى يعمل النظام من أي قرص/مسار على أي جهاز دون تعديل.
+const ROOT = path.resolve(__dirname, '..');
+const BIN = path.join(ROOT, 'node_modules', '@embedded-postgres', 'windows-x64', 'native', 'bin');
+const DATA = path.join(ROOT, '_tools', 'pgsql', 'data');
+const LOG = path.join(ROOT, '_tools', 'pgsql', 'postgres.log');
 const POSTMASTER_PID = path.join(DATA, 'postmaster.pid');
 const LAUNCHER = path.join(__dirname, 'pg-launch.vbs');
 const PORT = '5433';
