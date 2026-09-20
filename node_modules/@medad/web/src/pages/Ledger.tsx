@@ -461,6 +461,7 @@ function FiscalTab() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -474,12 +475,13 @@ function AuditTab() {
   useEffect(() => { void load(); }, [page]);
 
   return (
-    <div className="card">
+    <div className="card full">
       {toast}
       <div className="row-between">
         <h2>سجل التدقيق (Audit Log)</h2>
         <CsvButton filename="audit.csv" rows={(data?.rows ?? []).map((r: any) => ({ date: r.createdAt, actor: r.actor?.name, action: r.action, entity: r.entity, entityId: r.entityId }))} />
       </div>
+      <div className="table-scroll">
       <table className="grid">
         <thead><tr><th>الوقت</th><th>المستخدم</th><th>الإجراء</th><th>الكيان</th><th>المعرف</th></tr></thead>
         <tbody>
@@ -490,11 +492,12 @@ function AuditTab() {
               <td><Badge tone={r.action.includes('fail') || r.action.includes('bounced') ? 'bad' : 'ok'}>{r.action}</Badge></td>
               <td>{r.entity}</td>
               <td className="mono">{r.entityId?.slice(0, 8)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="row2">
+             </tr>
+           ))}
+         </tbody>
+       </table>
+       </div>
+       <div className="row2">
         <button className="btn secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>السابق</button>
         <span>صفحة {page}</span>
         <button className="btn secondary" onClick={() => setPage(page + 1)}>التالي</button>

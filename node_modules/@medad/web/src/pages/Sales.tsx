@@ -298,6 +298,7 @@ function ReturnsTab({ branchId, showToast }: { branchId: string; showToast: (m: 
 
   return (
     <div>
+      <div className="table-scroll">
       <table className="grid">
         <thead><tr><th>التاريخ</th><th>فاتورة المصدر</th><th>عدد القطع</th><th>طريقة الرد</th><th>رسوم إرجاع</th></tr></thead>
         <tbody>
@@ -314,6 +315,7 @@ function ReturnsTab({ branchId, showToast }: { branchId: string; showToast: (m: 
           {!rows && <tr><td colSpan={5}>جارٍ التحميل...</td></tr>}
         </tbody>
       </table>
+      </div>
       <p className="muted">أحدث 200 سجل</p>
     </div>
   );

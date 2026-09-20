@@ -205,19 +205,24 @@ export function Pos() {
   };
 
   // ─── الورديات ───
+  // الافتتاح = عدّ النقد الموجود في صندوق الفرع (بلا قيد محاسبي: النقد مسجل أصلاً في 1000).
+  // الإقفال = عدّ فعلي مقابل المتوقع المشتق من دفتر الأستاذ، والفرق يُرحَّل (عجز/فائض 5310).
   const openShift = async (openingAgora: number) => {
     try {
-      const s = await api<Shift>('/sales/shifts/open', { method: 'POST', body: { openingAmountAgora: openingAgora } });
-      setShift(s);
-      showToast('تم افتتاح الوردية');
+      const res = await api<{ warnings: string[] }>('/sales/shifts/open', { method: 'POST', body: { branchId, openingAmountAgora: openingAgora } });
+      loadShiftPanel();
+      showToast(res.warnings?.length ? `تم افتتاح الوردية — ${res.warnings.join('، ')}` : 'تم افتتاح الوردية', res.warnings?.length ? 'bad' : 'ok');
     } catch (e) { showToast((e as Error).message, 'bad'); }
   };
   const closeShift = async (actualAgora: number) => {
     if (!shift) return;
     try {
-      const rep = await api<any>(`/sales/shifts/${shift.id}/close`, { method: 'POST', body: { closingActualAgora: actualAgora } });
-      showToast(`أُقفلت الوردية — متوقع ${money(rep.expectedAgora)} / فعلي ${money(actualAgora)}`);
-      setShift(null);
+      const rep = await api<ShiftCloseResult>(`/sales/shifts/${shift.id}/close`, { method: 'POST', body: { closingActualAgora: actualAgora } });
+      const diff = rep.diffAgora ?? 0;
+      const diffText = diff === 0 ? 'بلا فروق' : `${diff < 0 ? 'عجز' : 'فائض'} ${money(Math.abs(diff))}${rep.entryId ? ' — مُرحَّل 5310' : ''}`;
+      const extra = rep.warnings?.length ? ` — ${rep.warnings.join('، ')}` : '';
+      showToast(`أُقفلت الوردية — متوقع ${money(rep.expectedAgora)} / فعلي ${money(actualAgora)} / ${diffText}${extra}`, diff === 0 && !extra ? 'ok' : 'bad');
+      loadShiftPanel();
     } catch (e) { showToast((e as Error).message, 'bad'); }
   };
 
@@ -226,7 +231,7 @@ export function Pos() {
       {toast}
       <div className="pos-toolbar">
         <Tabs active={tab} onChange={setTab} tabs={[{ id: 'sell', label: 'بيع' }, { id: 'return', label: 'مرتجع' }, { id: 'quotes', label: 'عروض الأسعار' }]} />
-        <ShiftBanner shift={shift} onOpen={openShift} onClose={closeShift} />
+        <ShiftBanner panel={shiftPanel} onOpen={openShift} onClose={closeShift} />
       </div>
       {tab === 'sell' && active && (
         <>
@@ -360,14 +365,35 @@ export function Pos() {
   );
 }
 
-function ShiftBanner({ shift, onOpen, onClose }: { shift: Shift | null; onOpen: (n: number) => void; onClose: (n: number) => void }) {
+/**
+ * شريط الوردية (§Phase4):
+ *  - بلا وردية: «صندوق الفرع» = رصيد حساب 1000 للفرع من الدفتر، وحقل افتتاح = **عدّ** النقد
+ *    الموجود فعلياً (يُقترح من العدّ الفعلي لإقفال الكاشير السابق). الافتتاح لا يرحّل قيداً.
+ *  - وردية مفتوحة: «المتوقع» = الافتتاح + صافي حركة 1000 للفرع خلال نافذة الوردية، وحقل الفعلي
+ *    للعدّ عند الإقفال؛ الفرق (عجز/فائض) يُرحَّل قيداً مزدوجاً على 5310 عند الإقفال.
+ */
+function ShiftBanner({ panel, onOpen, onClose }: { panel: ShiftPanel | null; onOpen: (n: number) => void; onClose: (n: number) => void }) {
+  const shift = panel?.shift ?? null;
+  const expected = panel?.expectedAgora ?? 0;
   const [opening, setOpening] = useState(0);
   const [actual, setActual] = useState(0);
+  // اقتراح مبلغ الافتتاح من آخر إقفال لنفس الكاشير/الفرع (ترحيل العهدة بدل إعادة الإدخال)
+  useEffect(() => {
+    if (!shift && panel?.suggestedOpeningAgora != null) setOpening(panel.suggestedOpeningAgora);
+  }, [shift?.id, panel?.suggestedOpeningAgora]);
+  // تعبئة العدّ الفعلي بالمتوقع عند التعرف على الوردية (يعدّله الكاشير بعد العدّ الحقيقي)
+  useEffect(() => {
+    setActual(expected);
+  }, [shift?.id]);
+  const diff = actual - expected;
+
   if (shift) {
     return (
       <div className="shift-banner open">
         <span className="shift-status">وردية مفتوحة · {new Date(shift.openedAt).toLocaleTimeString('ar')}</span>
-        <span className="shift-amount"><span className="shift-caption">الفعلي</span><SplitAgora agora={actual} onAgora={setActual} label="الفعلي" /></span>
+        <span className="shift-caption" title="الافتتاح + صافي حركة حساب الصندوق (1000) لفرع الوردية من دفتر الأستاذ">المتوقع {money(expected)}</span>
+        <span className="shift-amount"><span className="shift-caption">الفعلي (عدّ)</span><SplitAgora agora={actual} onAgora={setActual} label="الفعلي" /></span>
+        {diff !== 0 && <span className={`shift-diff ${diff < 0 ? 'short' : 'over'}`}>{diff < 0 ? 'عجز' : 'فائض'} {money(Math.abs(diff))}</span>}
         <button className="btn small" onClick={() => onClose(actual)}>إقفال</button>
       </div>
     );
@@ -375,7 +401,8 @@ function ShiftBanner({ shift, onOpen, onClose }: { shift: Shift | null; onOpen: 
   return (
     <div className="shift-banner">
       <span className="shift-status">لا وردية مفتوحة</span>
-      <span className="shift-amount"><span className="shift-caption">افتتاح</span><SplitAgora agora={opening} onAgora={setOpening} label="الافتتاح" /></span>
+      <span className="shift-caption" title="رصيد حساب الصندوق (1000) لفرع POS من دفتر الأستاذ">صندوق الفرع {money(panel?.boxBalanceAgora ?? 0)}</span>
+      <span className="shift-amount"><span className="shift-caption">افتتاح (عدّ)</span><SplitAgora agora={opening} onAgora={setOpening} label="الافتتاح" /></span>
       <button className="btn small" onClick={() => onOpen(opening)}>افتتاح</button>
     </div>
   );
