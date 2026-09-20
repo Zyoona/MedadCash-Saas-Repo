@@ -80,10 +80,17 @@ export class SalesController {
     return this.shifts.current(u.tenantId, branchId ?? u.branchId ?? '', u.userId);
   }
 
+  /** لوحة الوردية لشاشة POS: الوردية المفتوحة + المتوقع الحي + اقتراح الافتتاح + رصيد صندوق الفرع. */
+  @Get('shifts/panel')
+  @RequirePerm('pos.view')
+  shiftPanel(@CurrentUser() u: AuthUser, @Query('branchId') branchId?: string) {
+    return this.shifts.panel(u.tenantId, branchId ?? u.branchId ?? '', u.userId);
+  }
+
   @Post('shifts/:id/close')
   @RequirePerm('pos.shift')
   closeShift(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: { closingActualAgora: number }) {
-    return this.shifts.close(u.tenantId, id, b.closingActualAgora, u.userId, u.userId);
+    return this.shifts.close(u.tenantId, id, b.closingActualAgora, { userId: u.userId, perms: u.perms, branchId: u.branchId });
   }
 
   @Get('shifts/:id/report')

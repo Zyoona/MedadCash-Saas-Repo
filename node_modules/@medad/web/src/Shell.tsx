@@ -14,7 +14,7 @@ const NAV: { to: string; label: string; perm: string }[] = [
   { to: '/parties', label: 'العملاء والموردون', perm: 'parties.view' },
   { to: '/ledger', label: 'القيود والأستاذ', perm: 'ledger.view' },
   { to: '/counts', label: 'الجرد', perm: 'inventory.view' },
-  { to: '/transfers', label: 'التحويلات', perm: 'inventory.view' },
+  { to: '/transfers', label: 'نقل بين الفروع', perm: 'inventory.view' },
   { to: '/tasks', label: 'المهام', perm: 'tasks.view' },
   { to: '/labels', label: 'الملصقات', perm: 'labels.print' },
   { to: '/sync', label: 'المزامنة والنسخ', perm: 'sync.view' },

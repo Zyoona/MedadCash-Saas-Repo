@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { AGORA_PER_SHEKEL } from '@medad/shared-types';
 import { money } from './api.js';
 
@@ -26,10 +27,77 @@ export function Tabs({ tabs, active, onChange }: { tabs: { id: string; label: st
   );
 }
 
-export function Field({ label, children }: { label: string; children: ReactNode }) {
+export function FieldHint({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const w = 252;
+      const pad = 8;
+      let left = r.right - w;
+      if (left < pad) left = pad;
+      if (left + w > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - w - pad);
+      let top = r.bottom + 6;
+      if (top + 96 > window.innerHeight - pad) top = Math.max(pad, r.top - 96);
+      setPos({ top, left });
+    };
+    place();
+    const close = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('resize', place);
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('resize', place);
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className={`field-hint-btn${open ? ' open' : ''}`}
+        aria-label="توضيح الحقل"
+        aria-expanded={open}
+        onPointerDown={(e) => e.preventDefault()}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        ?
+      </button>
+      {open && createPortal(
+        <div ref={popRef} className="field-hint-pop" role="tooltip" style={{ top: pos.top, left: pos.left }}>
+          {text}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <label className="field">
-      <span>{label}</span>
+      <span className="field-label">
+        {label}
+        {hint ? <FieldHint text={hint} /> : null}
+      </span>
       {children}
     </label>
   );

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, money } from '../api.js';
-import { Badge, Field, Modal, ProductImage, readImageFile, useToast } from '../ui.js';
+import { Badge, Field, FieldHint, Modal, ProductImage, readImageFile, SplitAgora, useToast } from '../ui.js';
 import { PageLoader } from '../Loader.js';
 
 interface StockRow {
@@ -23,7 +23,7 @@ export function Inventory() {
   useEffect(() => { void load(); }, []);
 
   return (
-    <div className="card">
+    <div className="card full">
       {toast}
       <div className="row-between">
         <h2>المخزون — سعر وكمية لكل فرع</h2>
@@ -33,6 +33,7 @@ export function Inventory() {
         </div>
       </div>
       <input placeholder="بحث اسم / SKU / باركود..." value={q} onChange={(e) => setQ(e.target.value)} style={{ margin: '10px 0' }} />
+      <div className="table-scroll">
       <table className="grid">
         <thead>
           <tr><th>الصنف</th><th>الفئة</th><th>الباركود</th><th>السعر</th><th>التكلفة</th><th>الكمية</th><th>الحالة</th><th></th></tr>
@@ -67,6 +68,7 @@ export function Inventory() {
           ))}
         </tbody>
       </table>
+      </div>
       {creating && <NewProductModal onClose={() => setCreating(false)} onDone={() => { setCreating(false); load(); }} showToast={showToast} />}
       {editing && <ProductModal product={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); load(); }} showToast={showToast} />}
     </div>
@@ -74,7 +76,7 @@ export function Inventory() {
 }
 
 function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; onDone: () => void; showToast: (m: string, t?: 'ok' | 'bad') => void }) {
-  const [form, setForm] = useState({ name: '', sku: '', categoryId: '', brandId: '', lowStockDefault: 0, priceAgora: 0, costAgora: 0, variants: '' });
+  const [form, setForm] = useState({ name: '', sku: '', categoryId: '', brandId: '', lowStockDefault: 5, priceAgora: 0, costAgora: 0, variants: '' });
   const [taxonomy, setTaxonomy] = useState<{ categories: any[]; brands: any[]; units: any[]; branches: any[] }>({ categories: [], brands: [], units: [], branches: [] });
   const [baseUnitId, setBaseUnitId] = useState('');
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
@@ -83,7 +85,12 @@ function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; 
     Promise.all([
       api<any[]>('/catalog/categories'), api<any[]>('/catalog/brands'),
       api<any[]>('/catalog/units'), api<any[]>('/org/branches'),
-    ]).then(([c, b, u, br]) => setTaxonomy({ categories: c, brands: b, units: u, branches: br }));
+      api<Record<string, any>>('/settings').catch(() => ({} as Record<string, any>)),
+    ]).then(([c, b, u, br, s]) => {
+      setTaxonomy({ categories: c, brands: b, units: u, branches: br });
+      const qty = Number(s?.low_stock_default?.qty);
+      setForm((f) => ({ ...f, lowStockDefault: Number.isFinite(qty) ? qty : 5 }));
+    }).catch((e) => showToast((e as Error).message, 'bad'));
   }, []);
 
   const pickImage = async (file: File | undefined) => {
@@ -93,12 +100,13 @@ function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; 
   };
 
   const submit = async () => {
+    if (!form.name.trim()) { showToast('أدخل اسم الصنف', 'bad'); return; }
     try {
       const branch = taxonomy.branches[0];
       const created = await api<any>('/catalog/products', {
         method: 'POST',
         body: {
-          name: form.name, sku: form.sku || undefined,
+          name: form.name.trim(), sku: form.sku || undefined,
           categoryId: form.categoryId || null, brandId: form.brandId || null,
           baseUnitId: baseUnitId || null, lowStockDefault: form.lowStockDefault,
           variants: form.variants.split('،').map((v) => v.trim()).filter(Boolean).map((name) => ({ name })),
@@ -117,48 +125,69 @@ function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; 
 
   return (
     <Modal title="صنف جديد" onClose={onClose}>
-      <Field label="الاسم *"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-      <div className="img-editor">
-        <ProductImage src={imageDataUrl} alt="صورة الصنف" size={64} />
-        <Field label="صورة الصنف (اختياري)">
-          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(e) => void pickImage(e.target.files?.[0])} />
-        </Field>
-        {imageDataUrl && <button className="btn secondary small" onClick={() => setImageDataUrl(null)}>إزالة الصورة</button>}
+      <div className="np-form">
+        <div className="np-photo">
+          <ProductImage src={imageDataUrl} alt="صورة الصنف" size={88} />
+          <div className="np-photo-body">
+            <span className="field-label">
+              صورة الصنف
+              <FieldHint text="صورة اختيارية تظهر في الكاشير وجدول المخزون. الصيغ المدعومة: PNG و JPEG و WebP و GIF." />
+            </span>
+            <div className="np-photo-actions">
+              <label className="btn secondary small np-file-btn">
+                {imageDataUrl ? 'تغيير الصورة' : 'اختيار صورة'}
+                <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(e) => void pickImage(e.target.files?.[0])} />
+              </label>
+              {imageDataUrl && <button type="button" className="btn secondary small" onClick={() => setImageDataUrl(null)}>إزالة</button>}
+            </div>
+            <span className="np-photo-note">اختياري — إن تُركت فارغة تُستخدم الصورة الافتراضية</span>
+          </div>
+        </div>
+        <div className="np-grid">
+          <div className="np-span-2">
+            <Field label="الاسم" hint="اسم الصنف كما سيظهر في الكاشير والمخزون والفواتير.">
+              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="مثال: حليب كامل الدسم" />
+            </Field>
+          </div>
+          <Field label="SKU" hint="رمز داخلي اختياري لتمييز الصنف. يمكن البحث به لاحقاً من شريط البحث.">
+            <input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} placeholder="اختياري" />
+          </Field>
+          <Field label="حد التنبيه" hint="الكمية التي عندها يُعتبر الصنف ناقصاً. القيمة الافتراضية مأخوذة من إعداد «حد التنبيه العام (النواقص)» في صفحة الإعدادات.">
+            <input type="number" min={0} value={form.lowStockDefault} onChange={(e) => setForm({ ...form, lowStockDefault: Number(e.target.value) })} />
+          </Field>
+          <Field label="الفئة" hint="تصنيف الصنف لتسهيل التصفية والتقارير. يمكن تركه فارغاً.">
+            <select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
+              <option value="">بدون فئة</option>
+              {taxonomy.categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+          <Field label="الماركة" hint="الشركة أو العلامة التجارية للصنف. اختياري.">
+            <select value={form.brandId} onChange={(e) => setForm({ ...form, brandId: e.target.value })}>
+              <option value="">بدون ماركة</option>
+              {taxonomy.brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </Field>
+          <Field label="الوحدة الأساسية" hint="وحدة القياس الافتراضية (قطعة، كغ، لتر…). تُستخدم عند البيع والجرد.">
+            <select value={baseUnitId} onChange={(e) => setBaseUnitId(e.target.value)}>
+              <option value="">بدون وحدة</option>
+              {taxonomy.units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </Field>
+          <Field label="المتغيرات" hint="أسماء الألوان أو المقاسات مفصولة بفاصلة عربية «،». يُنشأ لكل منها باركود تلقائي. اتركه فارغاً لصنف بسيط.">
+            <input placeholder="أحمر، أزرق" value={form.variants} onChange={(e) => setForm({ ...form, variants: e.target.value })} />
+          </Field>
+          <Field label="سعر البيع" hint="سعر البيع في الفرع الحالي. يُدخل بالشيكل والأغورات كما يظهر للزبون.">
+            <SplitAgora agora={form.priceAgora} onAgora={(v) => setForm({ ...form, priceAgora: v })} label="سعر البيع" />
+          </Field>
+          <Field label="التكلفة" hint="تكلفة شراء الصنف في الفرع الحالي. تُستخدم لحساب الربح ولا تظهر للزبون.">
+            <SplitAgora agora={form.costAgora} onAgora={(v) => setForm({ ...form, costAgora: v })} label="التكلفة" />
+          </Field>
+        </div>
+        <div className="np-actions">
+          <button type="button" className="btn secondary" onClick={onClose}>إلغاء</button>
+          <button type="button" className="btn" onClick={submit} disabled={!form.name.trim()}>حفظ الصنف</button>
+        </div>
       </div>
-      <div className="row2">
-        <Field label="SKU"><input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} /></Field>
-        <Field label="حد التنبيه"><input type="number" value={form.lowStockDefault} onChange={(e) => setForm({ ...form, lowStockDefault: Number(e.target.value) })} /></Field>
-      </div>
-      <div className="row2">
-        <Field label="الفئة">
-          <select value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
-            <option value="">—</option>
-            {taxonomy.categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </Field>
-        <Field label="الماركة">
-          <select value={form.brandId} onChange={(e) => setForm({ ...form, brandId: e.target.value })}>
-            <option value="">—</option>
-            {taxonomy.brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-        </Field>
-      </div>
-      <div className="row2">
-        <Field label="الوحدة الأساسية">
-          <select value={baseUnitId} onChange={(e) => setBaseUnitId(e.target.value)}>
-            <option value="">—</option>
-            {taxonomy.units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-          </select>
-        </Field>
-        <Field label="متغيرات (فصل بـ ،)">
-          <input placeholder="أحمر، أزرق" value={form.variants} onChange={(e) => setForm({ ...form, variants: e.target.value })} />
-        </Field>
-      </div>
-      <div className="row2">
-        <Field label="سعر الفرع (أغورات)"><input type="number" value={form.priceAgora} onChange={(e) => setForm({ ...form, priceAgora: Number(e.target.value) })} /></Field>
-        <Field label="التكلفة (أغورات)"><input type="number" value={form.costAgora} onChange={(e) => setForm({ ...form, costAgora: Number(e.target.value) })} /></Field>
-      </div>
-      <button className="btn wide" onClick={submit}>حفظ</button>
     </Modal>
   );
 }

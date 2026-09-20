@@ -1,30 +1,111 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import { LedgerService } from '../ledger/ledger.service.js';
 import { agoraToDec, decToAgora } from '../../common/money.util.js';
-import { auditTx, type Db } from '../../common/ctx.js';
+import { auditTx, ensureAccount, fiscalYearFor, type Db } from '../../common/ctx.js';
+import { hasPerm } from '../../common/permissions.js';
 
-// Shifts (§Phase4): opening/closing with expected-vs-actual matching.
-// Cash expectation = opening + cash sales − cash refunds during the shift.
+// الورديات (§Phase4): افتتاح/إقفال مع مطابقة المتوقع مقابل العدّ الفعلي.
+//
+// النموذج المحاسبي المعتمد (ملزم):
+//  - حساب 1000 (الصندوق) هو صندوق الفرع نفسه؛ كل حركة نقدية له قيد مزدوج يحمل branchId.
+//  - «مبلغ الافتتاح» = عدّ النقد الموجود في الصندوق لحظة بدء الوردية، وليس نقل ملكية:
+//    لا يُرحَّل أي قيد عند الافتتاح لأن النقود مسجلة أصلاً في 1000 (الرصيد الافتتاحي المحاسبي
+//    يُرحَّل مرة واحدة فقط عبر /accounts/opening مقابل 3900).
+//  - المتوقع = مبلغ الافتتاح + صافي حركة 1000 للفرع خلال نافذة الوردية (من دفتر الأستاذ مباشرة)،
+//    فيشمل المبيعات النقدية والمرتجعات والتحصيلات ومدفوعات الموردين والمشتريات والمصروفات والتحويلات.
+//  - الفرق (عجز/فائض) عند الإقفال يُرحَّل: عجز Dr 5310 / Cr 1000 — فائض Dr 1000 / Cr 5310،
+//    فيصبح رصيد الصندوق الدفتري مطابقاً للعدّ الفعلي.
+//  - الوردية وحدة مساءلة الكاشير: تُفتتح مع كل وردية (وليست لمرة واحدة)، ووردية مفتوحة واحدة
+//    لكل (مستأجر، فرع، كاشير). الإقفال بيد الكاشير نفسه، وإقفال وردية غيره يتطلب pos.shift_any.
 
 const CASH = '1000';
+const CASH_DIFF = '5310';
+const CASH_DIFF_NAME = 'فروقات الصندوق (عجز/فائض)';
+
+/** مصادر لا تُحتسب ضمن حركة الصندوق داخل نافذة الوردية:
+ *  opening_balance = تعرف أولي للرصيد (يظهر ضمن العدّ الافتتاحي نفسه وليس حركة نقدية)،
+ *  shift_close = قيد العجز/الفائض عند الإقفال (حتى لا يُحتسب مرتين). */
+const NON_CASH_FLOW_SOURCES = ['opening_balance', 'shift_close'];
+
+export interface ShiftActor {
+  userId: string;
+  perms: string[];
+  branchId?: string | null;
+}
 
 @Injectable()
 export class ShiftsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ledger: LedgerService,
+  ) {}
 
-  async open(tenantId: string, branchId: string, cashierId: string, openingAmountAgora: number, actorId: string) {
-    if (!Number.isInteger(openingAmountAgora) || openingAmountAgora < 0) throw new BadRequestException('مبلغ افتتاح غير صالح');
-    const existing = await this.prisma.shift.findFirst({ where: { tenantId, branchId, cashierId, closedAt: null } });
-    if (existing) throw new BadRequestException('توجد وردية مفتوحة لنفس الكاشير');
-    return this.prisma.$transaction(async (db: Db) => {
-      const shift = await db.shift.create({
-        data: { tenantId, branchId, cashierId, openingAmount: agoraToDec(openingAmountAgora) },
-      });
-      await auditTx(db, { tenantId, actorId, branchId, action: 'open_shift', entity: 'shifts', entityId: shift.id, diff: { openingAmountAgora } });
-      return shift;
+  /** حركة الصندوق (1000) لفرع ضمن نافذة زمنية من دفتر الأستاذ: الصافي + تفصيل حسب نوع المصدر. */
+  private async cashFlowDetail(db: Db, tenantId: string, branchId: string, from: Date, to: Date) {
+    const lines: { debit: unknown; credit: unknown; entry: { sourceType: string } }[] = await db.journalLine.findMany({
+      where: {
+        entry: { tenantId, branchId, date: { gte: from, lte: to }, sourceType: { notIn: NON_CASH_FLOW_SOURCES } },
+        account: { code: CASH },
+      },
+      select: { debit: true, credit: true, entry: { select: { sourceType: true } } },
+    });
+    const bySource = new Map<string, number>();
+    let netAgora = 0;
+    for (const l of lines) {
+      const amountAgora = decToAgora(l.debit as never) - decToAgora(l.credit as never);
+      netAgora += amountAgora;
+      bySource.set(l.entry.sourceType, (bySource.get(l.entry.sourceType) ?? 0) + amountAgora);
+    }
+    return {
+      netAgora,
+      bySource: [...bySource.entries()]
+        .map(([sourceType, amountAgora]) => ({ sourceType, amountAgora }))
+        .sort((a, b) => b.amountAgora - a.amountAgora),
+    };
+  }
+
+  /** رصيد الصندوق الدفتري للفرع (كل الفترات) — مشتق من journal_lines فقط. */
+  private async boxBalanceAgora(db: Db, tenantId: string, branchId: string): Promise<number> {
+    const sums: { _sum: { debit: unknown; credit: unknown } }[] = await db.journalLine.groupBy({
+      by: ['accountId'],
+      where: { entry: { tenantId, branchId }, account: { code: CASH } },
+      _sum: { debit: true, credit: true },
+    });
+    return sums.reduce((s, r) => s + decToAgora(r._sum.debit as never) - decToAgora(r._sum.credit as never), 0);
+  }
+
+  private async countOtherOpenShifts(db: Db, tenantId: string, branchId: string, excludeCashierId: string | null): Promise<number> {
+    return db.shift.count({
+      where: { tenantId, branchId, closedAt: null, ...(excludeCashierId ? { cashierId: { not: excludeCashierId } } : {}) },
     });
   }
 
+  /** افتتاح وردية جديدة: تسجيل العدّ الافتتاحي فقط — بلا قيد محاسبي (النقد مسجل أصلاً في 1000). */
+  async open(tenantId: string, branchId: string, cashierId: string, openingAmountAgora: number, actorId: string) {
+    if (!Number.isInteger(openingAmountAgora) || openingAmountAgora < 0) throw new BadRequestException('مبلغ افتتاح غير صالح');
+    const branch = await this.prisma.branch.findFirst({ where: { id: branchId, tenantId, deletedAt: null }, select: { id: true } });
+    if (!branch) throw new NotFoundException('الفرع غير موجود');
+    const existing = await this.prisma.shift.findFirst({ where: { tenantId, branchId, cashierId, closedAt: null } });
+    if (existing) throw new BadRequestException('توجد وردية مفتوحة لنفس الكاشير');
+
+    const openedAt = new Date();
+    const shift = await this.prisma.$transaction(async (db: Db) => {
+      const created = await db.shift.create({
+        data: { tenantId, branchId, cashierId, openingAmount: agoraToDec(openingAmountAgora), openedAt },
+      });
+      await auditTx(db, { tenantId, actorId, branchId, action: 'open_shift', entity: 'shifts', entityId: created.id, diff: { openingAmountAgora } });
+      return created;
+    });
+
+    const warnings: string[] = [];
+    if ((await this.countOtherOpenShifts(this.prisma, tenantId, branchId, cashierId)) > 0) {
+      warnings.push('وردية أخرى مفتوحة في نفس الفرع — حركة صندوق الفرع تُحتسب مشتركة حتى الإقفال');
+    }
+    return { ...shift, openingAmountAgora, expectedAgora: openingAmountAgora, warnings };
+  }
+
+  /** الوردية المفتوحة الحالية للكاشير. */
   current(tenantId: string, branchId: string, cashierId?: string) {
     return this.prisma.shift.findFirst({
       where: { tenantId, branchId, closedAt: null, ...(cashierId ? { cashierId } : {}) },
@@ -32,50 +113,122 @@ export class ShiftsService {
     });
   }
 
-  /** Expected cash = opening + Σ cash invoice payments − Σ cash refunds (within shift window). */
-  private async expectedCash(tenantId: string, shift: { id: string; openedAt: Date; openingAmount: unknown }) {
-    const opening = decToAgora(shift.openingAmount as never);
-    const payments = await this.prisma.invoicePayment.findMany({
-      where: { invoice: { tenantId, shiftId: shift.id, status: 'posted' }, accountCode: CASH },
-      select: { amount: true },
-    });
-    const salesCash = payments.reduce((s, p) => s + decToAgora(p.amount), 0); // negatives (change) reduce
-    const refunds = await this.prisma.saleReturn.findMany({
-      where: { tenantId, refundAccountCode: CASH, createdAt: { gte: shift.openedAt } },
-      include: { lines: { include: { ret: { select: { id: true } } } } },
-    });
-    // refund cash amount is stored via ledger; recompute from return totals is complex — use ledger lines of sourceType sale_return
-    const returnsCash = await this.prisma.journalLine.findMany({
-      where: {
-        entry: { tenantId, sourceType: 'sale_return', date: { gte: shift.openedAt } },
-        account: { code: CASH },
-      },
-      select: { credit: true, debit: true },
-    });
-    const refundsCash = returnsCash.reduce((s, l) => s + decToAgora(l.credit) - decToAgora(l.debit), 0);
-    void refunds;
-    return opening + salesCash - refundsCash;
+  /**
+   * لوحة الوردية لشاشة POS: الوردية المفتوحة + المتوقع الحي (من الدفتر) + اقتراح مبلغ الافتتاح
+   * (من العدّ الفعلي لإقفال الكاشير السابق) + رصيد الصندوق الدفتري للفرع.
+   */
+  async panel(tenantId: string, branchId: string, cashierId: string) {
+    const db = this.prisma;
+    const [shift, lastClosed, boxBalance, otherOpenShifts] = await Promise.all([
+      db.shift.findFirst({ where: { tenantId, branchId, cashierId, closedAt: null }, orderBy: { openedAt: 'desc' } }),
+      db.shift.findFirst({
+        where: { tenantId, branchId, cashierId, closedAt: { not: null } },
+        orderBy: { closedAt: 'desc' },
+        select: { id: true, closedAt: true, closingActual: true },
+      }),
+      this.boxBalanceAgora(db, tenantId, branchId),
+      this.countOtherOpenShifts(db, tenantId, branchId, cashierId),
+    ]);
+    const warnings: string[] = [];
+    if (otherOpenShifts > 0) warnings.push('وردية أخرى مفتوحة في نفس الفرع — حركة صندوق الفرع تُحتسب مشتركة حتى إقفالها');
+    if (!shift) {
+      return {
+        shift: null,
+        expectedAgora: null,
+        suggestedOpeningAgora: lastClosed?.closingActual != null ? decToAgora(lastClosed.closingActual) : 0,
+        boxBalanceAgora: boxBalance,
+        otherOpenShifts,
+        warnings,
+      };
+    }
+    const flow = await this.cashFlowDetail(db, tenantId, branchId, shift.openedAt, new Date());
+    const openingAgora = decToAgora(shift.openingAmount);
+    return {
+      shift: { id: shift.id, openedAt: shift.openedAt, openingAmountAgora: openingAgora, cashierId: shift.cashierId },
+      expectedAgora: openingAgora + flow.netAgora,
+      suggestedOpeningAgora: null,
+      boxBalanceAgora: boxBalance,
+      otherOpenShifts,
+      warnings,
+    };
   }
 
-  async close(tenantId: string, shiftId: string, closingActualAgora: number, closedBy: string, actorId: string) {
+  /** إقفال وردية: مطابقة العدّ الفعلي مع المتوقع + ترحيل فرق العجز/الفائض (5310) في نفس الذرية. */
+  async close(tenantId: string, shiftId: string, closingActualAgora: number, actor: ShiftActor) {
     const shift = await this.prisma.shift.findFirst({ where: { id: shiftId, tenantId } });
     if (!shift) throw new BadRequestException('الوردية غير موجودة');
     if (shift.closedAt) throw new BadRequestException('الوردية مغلقة مسبقاً');
     if (!Number.isInteger(closingActualAgora) || closingActualAgora < 0) throw new BadRequestException('مبلغ فعلي غير صالح');
-    const expected = await this.expectedCash(tenantId, shift);
-    return this.prisma.$transaction(async (db: Db) => {
-      const updated = await db.shift.update({
+    if (shift.cashierId !== actor.userId && !hasPerm(actor.perms, 'pos.shift_any')) {
+      throw new ForbiddenException('إقفال وردية كاشير آخر يتطلب صلاحية pos.shift_any');
+    }
+    if (actor.branchId && actor.branchId !== shift.branchId && !hasPerm(actor.perms, 'pos.shift_any')) {
+      throw new ForbiddenException('لا يمكن إقفال وردية لفرع آخر');
+    }
+
+    const result = await this.prisma.$transaction(async (db: Db) => {
+      const closedAt = new Date();
+      const flow = await this.cashFlowDetail(db, tenantId, shift.branchId, shift.openedAt, closedAt);
+      const openingAgora = decToAgora(shift.openingAmount);
+      const expectedAgora = openingAgora + flow.netAgora;
+      const diffAgora = closingActualAgora - expectedAgora;
+      if (!Number.isInteger(expectedAgora) || !Number.isInteger(diffAgora)) throw new BadRequestException('حساب فرق الصندوق غير صالح');
+
+      let entryId: string | null = null;
+      if (diffAgora !== 0) {
+        // ترحيل الفرق: عجز Dr 5310 / Cr 1000 — فائض Dr 1000 / Cr 5310
+        await ensureAccount(db, tenantId, CASH_DIFF, CASH_DIFF_NAME, 'expense');
+        const fy = await fiscalYearFor(db, tenantId, closedAt);
+        entryId = await this.ledger.post({
+          tenantId, branchId: shift.branchId, fiscalYearId: fy.id, date: closedAt,
+          sourceType: 'shift_close', sourceId: shift.id,
+          memo: diffAgora < 0
+            ? `عجز صندوق عند إقفال الوردية ${(-diffAgora / 100).toFixed(2)} ₪`
+            : `فائض صندوق عند إقفال الوردية ${(diffAgora / 100).toFixed(2)} ₪`,
+          lines: diffAgora < 0
+            ? [
+                { accountCode: CASH_DIFF, debitAgora: -diffAgora, creditAgora: 0 },
+                { accountCode: CASH, debitAgora: 0, creditAgora: -diffAgora },
+              ]
+            : [
+                { accountCode: CASH, debitAgora: diffAgora, creditAgora: 0 },
+                { accountCode: CASH_DIFF, debitAgora: 0, creditAgora: diffAgora },
+              ],
+        }, db);
+      }
+
+      const row = await db.shift.update({
         where: { id: shiftId },
-        data: { closingExpected: agoraToDec(expected), closingActual: agoraToDec(closingActualAgora), closedAt: new Date(), closedBy },
+        data: { closingExpected: agoraToDec(expectedAgora), closingActual: agoraToDec(closingActualAgora), closedAt, closedBy: actor.userId },
       });
-      await auditTx(db, { tenantId, actorId, branchId: shift.branchId, action: 'close_shift', entity: 'shifts', entityId: shiftId, diff: { expectedAgora: expected, actualAgora: closingActualAgora, diffAgora: closingActualAgora - expected } });
-      return { ...updated, expectedAgora: expected, diffAgora: closingActualAgora - expected };
+      await auditTx(db, {
+        tenantId, actorId: actor.userId, branchId: shift.branchId,
+        action: 'close_shift', entity: 'shifts', entityId: shiftId,
+        diff: { expectedAgora, actualAgora: closingActualAgora, diffAgora, cashFlowAgora: flow.netAgora, entryId },
+      });
+      return { row, entryId, expectedAgora, diffAgora, cashFlowAgora: flow.netAgora, closedAt };
     });
+
+    const warnings: string[] = [];
+    if ((await this.countOtherOpenShifts(this.prisma, tenantId, shift.branchId, shift.cashierId)) > 0) {
+      warnings.push('وردية أخرى ما زالت مفتوحة في نفس الفرع — رصيد الصندوق الدفتري لم يُطابَق كاملاً');
+    }
+    return {
+      ...result.row,
+      expectedAgora: result.expectedAgora,
+      diffAgora: result.diffAgora,
+      cashFlowAgora: result.cashFlowAgora,
+      boxBalanceAgora: await this.boxBalanceAgora(this.prisma, tenantId, shift.branchId),
+      entryId: result.entryId,
+      warnings,
+    };
   }
 
+  /** تقرير الوردية: فواتيرها + مطابقة نقدية كاملة من الدفتر (افتتاح/حركة/متوقع/فعلي/فرق). */
   async report(tenantId: string, shiftId: string) {
     const shift = await this.prisma.shift.findFirst({ where: { id: shiftId, tenantId }, include: { invoices: { include: { lines: true, payments: true } } } });
     if (!shift) throw new BadRequestException('الوردية غير موجودة');
+    const end = shift.closedAt ?? new Date();
     const byMethod = new Map<string, number>();
     let salesTotal = 0;
     let invoicesCount = 0;
@@ -87,11 +240,42 @@ export class ShiftsService {
         byMethod.set(p.method, (byMethod.get(p.method) ?? 0) + decToAgora(p.amount));
       }
     }
+    const flow = await this.cashFlowDetail(this.prisma, tenantId, shift.branchId, shift.openedAt, end);
+    const boxBalance = await this.boxBalanceAgora(this.prisma, tenantId, shift.branchId);
+    const openingAgora = decToAgora(shift.openingAmount);
+    const recomputedExpectedAgora = openingAgora + flow.netAgora;
+    // الوردية المغلقة: المتوقع المخزن هو المعتمد، ويُكشف أي قيد لاحق غيّر النافذة (للتدقيق)
+    const storedExpectedAgora = shift.closingExpected != null ? decToAgora(shift.closingExpected) : null;
+    const actualAgora = shift.closingActual != null ? decToAgora(shift.closingActual) : null;
+    const expectedAgora = storedExpectedAgora ?? recomputedExpectedAgora;
+    const warnings: string[] = [];
+    if (storedExpectedAgora !== null && storedExpectedAgora !== recomputedExpectedAgora) {
+      warnings.push('أُضيفت حركات نقدية مؤثرة على نافذة الوردية بعد الإقفال — راجع القيود اللاحقة');
+    }
     return {
-      shift: { id: shift.id, openedAt: shift.openedAt, closedAt: shift.closedAt, openingAmountAgora: decToAgora(shift.openingAmount), closingExpectedAgora: shift.closingExpected ? decToAgora(shift.closingExpected) : null, closingActualAgora: shift.closingActual ? decToAgora(shift.closingActual) : null },
+      shift: {
+        id: shift.id,
+        openedAt: shift.openedAt,
+        closedAt: shift.closedAt,
+        cashierId: shift.cashierId,
+        openingAmountAgora: openingAgora,
+        closingExpectedAgora: storedExpectedAgora,
+        closingActualAgora: actualAgora,
+      },
       salesTotalAgora: salesTotal,
       invoicesCount,
       byMethod: [...byMethod.entries()].map(([method, amountAgora]) => ({ method, amountAgora })),
+      cash: {
+        openingAgora,
+        movementsAgora: flow.netAgora,
+        expectedAgora,
+        recomputedExpectedAgora,
+        actualAgora,
+        diffAgora: actualAgora === null ? null : actualAgora - expectedAgora,
+        boxBalanceAgora: boxBalance,
+        movementsBySource: flow.bySource,
+      },
+      warnings,
     };
   }
 }

@@ -14,6 +14,7 @@ export const PERMS = [
   'parties.view', 'parties.manage',
   'purchases.view', 'purchases.manage',
   'pos.view', 'pos.sell', 'pos.shift',
+  'pos.shift_any', // ربط/إقفال ورديات كاشير آخر أو فرع آخر (مدير)
   'returns.manage',
   'quotations.view', 'quotations.manage',
   'tasks.view', 'tasks.manage',

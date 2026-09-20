@@ -6,6 +6,7 @@ import { PartiesService } from '../parties/parties.service.js';
 import { computeInvoice } from '@medad/shared-types';
 import { agoraToDec, decToAgora } from '../../common/money.util.js';
 import { auditTx, fiscalYearFor, settingValue, syncOpTx, type Db } from '../../common/ctx.js';
+import { hasPerm } from '../../common/permissions.js';
 
 const REVENUE = '4000';
 const TAX_PAYABLE = '2100';
@@ -51,6 +52,24 @@ export class SalesService {
       select: { id: true },
     });
     if (!bank) throw new BadRequestException(`كود الحساب البنكي غير مسجل أو معطل: ${code}`);
+  }
+
+  /**
+   * ربط الفاتورة بالوردية (§Phase4): يجب أن تكون الوردية موجودة، ما زالت مفتوحة،
+   * تتبع نفس فرع الفاتورة، وتعود لنفس الكاشير (أو بصلاحية pos.shift_any).
+   * بدون هذا التحقق يمكن إسناد فواتير لورديات مغلقة/لغير الكاشير فتفسد مطابقة الصندوق.
+   */
+  private async assertShift(db: Db, tenantId: string, actor: { userId: string; perms: string[] }, branchId: string, shiftId: string) {
+    const shift = await db.shift.findFirst({
+      where: { id: shiftId, tenantId },
+      select: { id: true, branchId: true, cashierId: true, closedAt: true },
+    });
+    if (!shift) throw new BadRequestException('الوردية غير موجودة');
+    if (shift.closedAt) throw new BadRequestException('لا يمكن ربط فاتورة بوردية مغلقة — افتح وردية جديدة');
+    if (shift.branchId !== branchId) throw new BadRequestException('الوردية تتبع فرعاً غير فرع الفاتورة');
+    if (shift.cashierId !== actor.userId && !hasPerm(actor.perms, 'pos.shift_any')) {
+      throw new ForbiddenException('الوردية تتبع كاشير آخر');
+    }
   }
 
   async createInvoice(tenantId: string, actor: { userId: string; perms: string[]; device?: string; ip?: string }, input: {
@@ -116,6 +135,8 @@ export class SalesService {
     }
 
     return this.prisma.$transaction(async (db: Db) => {
+      // الوردية: ربط الفاتورة بوردية مفتوحة لنفس الكاشير/الفرع (§Phase4)
+      if (input.shiftId) await this.assertShift(db, tenantId, actor, branchId, input.shiftId);
       // Customer: default cash customer; credit sales need a real customer + limit check (§3)
       const customer = input.customerId
         ? await db.customer.findFirst({ where: { id: input.customerId, tenantId, deletedAt: null } })

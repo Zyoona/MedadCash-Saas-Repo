@@ -37,12 +37,13 @@ function TrialTab() {
   useEffect(() => { api('/ledger/trial-balance?byAccount=1').then(setData).catch((e) => showToast((e as Error).message, 'bad')); }, []);
   if (!data) return <div className="card"><PageLoader /></div>;
   return (
-    <div className="card">
+    <div className="card full">
       {toast}
       <div className="row-between">
         <h2>ميزان المراجعة</h2>
         <Badge tone={data.balanced ? 'ok' : 'bad'}>{data.balanced ? 'متوازن' : 'غير متوازن'}</Badge>
       </div>
+      <div className="table-scroll">
       <table className="grid">
         <thead><tr><th>الكود</th><th>الحساب</th><th>النوع</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead>
         <tbody>
@@ -55,6 +56,7 @@ function TrialTab() {
           ))}
         </tbody>
       </table>
+      </div>
       <CsvButton filename="trial-balance.csv" rows={data.rows.map((r: any) => ({ code: r.code, name: r.name, debit: r.debitAgora / 100, credit: r.creditAgora / 100, balance: r.balanceAgora / 100 }))} />
     </div>
   );

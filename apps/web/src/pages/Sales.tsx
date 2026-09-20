@@ -55,7 +55,7 @@ export function Sales() {
   }, []);
 
   return (
-    <div className="card">
+    <div className="card full">
       {toast}
       <h2>المبيعات</h2>
       <p className="muted">سجل للقراءة فقط — الفواتير غير قابلة للتعديل، والتصحيح عبر مرتجع بيع من شاشة الكاشير</p>
@@ -183,6 +183,7 @@ function InvoicesTab({ branchId, branches, showToast }: {
         <button className="btn secondary" onClick={applyRef}>بحث</button>
         <button className="btn secondary" disabled={exporting || !data || data.rows.length === 0} onClick={() => void exportAll()}>{exporting ? 'جارٍ التصدير...' : 'تصدير الكل CSV'}</button>
       </div>
+      <div className="table-scroll">
       <table className="grid">
         <thead>
           <tr><th>التاريخ</th><th>المرجع</th><th>الزبون</th><th>الفرع</th><th>أسطر</th><th>الإجمالي</th><th>الدفع</th><th>الحالة</th><th></th></tr>
@@ -210,6 +211,7 @@ function InvoicesTab({ branchId, branches, showToast }: {
           {!data && <tr><td colSpan={9}>جارٍ التحميل...</td></tr>}
         </tbody>
       </table>
+      </div>
       <div className="row-between">
         <span className="muted">{data ? `الإجمالي: ${data.total} فاتورة — صفحة ${page} من ${pages}` : ''}</span>
         <div className="actions">
@@ -229,7 +231,7 @@ function InvoiceDetailModal({ detail, onClose }: { detail: InvoiceDetail; onClos
   const returnedQty = detail.returned.reduce((s, r) => s + r.qty, 0);
 
   return (
-    <Modal title={`فاتورة ${detail.refNo ?? detail.id.slice(0, 8)}`} onClose={onClose}>
+    <Modal title={`فاتورة ${detail.refNo ?? detail.id.slice(0, 8)}`} onClose={onClose} wide>
       <div className="row2">
         <Field label="التاريخ"><input value={dtShort(detail.createdAt)} readOnly /></Field>
         <Field label="الزبون"><input value={detail.customer.name} readOnly /></Field>

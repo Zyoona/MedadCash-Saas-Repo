@@ -86,7 +86,7 @@ export function PurchaseDetails() {
 
   if (failed) {
     return (
-      <div className="card">
+      <div className="card full">
         <h2>تفاصيل فاتورة الشراء</h2>
         <p className="alert">{failed}</p>
         <button className="btn secondary" onClick={() => navigate('/purchases')}>رجوع إلى المشتريات</button>
@@ -94,7 +94,7 @@ export function PurchaseDetails() {
     );
   }
   if (!detail || !totals) {
-    return <div className="card"><p className="muted">جارٍ التحميل...</p></div>;
+    return <div className="card full"><p className="muted">جارٍ التحميل...</p></div>;
   }
 
   const st = STATUS_AR[detail.status] ?? { label: detail.status, tone: 'warn' as const };
@@ -103,7 +103,7 @@ export function PurchaseDetails() {
   const sourceLabel = (code: string) => sources.find((s) => s.code === code)?.label ?? code;
 
   return (
-    <div className="card" id="purchase-print-area">
+    <div className="card full" id="purchase-print-area">
       <div className="row-between no-print">
         <h2>فاتورة شراء — {detail.refNo ?? detail.id.slice(0, 8)}</h2>
         <div className="actions">
@@ -122,6 +122,7 @@ export function PurchaseDetails() {
       </div>
 
       <h3>الأسطر</h3>
+      <div className="table-scroll">
       <table className="grid">
         <thead>
           <tr><th>#</th><th>الصنف</th><th>الباركود</th><th>كمية</th><th>تكلفة الوحدة</th><th>خصم السطر</th><th>حصة خصم الفاتورة</th><th>الخاضع للضريبة</th><th>الضريبة</th><th>تكلفة الوحدة الصافية</th></tr>
@@ -147,6 +148,7 @@ export function PurchaseDetails() {
           {detail.lines.length === 0 && <tr><td colSpan={10}>لا توجد أسطر</td></tr>}
         </tbody>
       </table>
+      </div>
 
       <div className="purchase-totals">
         <div><span>خصم فاتورة</span><Money agora={detail.discountAgora} /></div>

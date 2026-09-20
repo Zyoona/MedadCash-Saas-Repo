@@ -38,12 +38,13 @@ export function Purchases() {
   };
 
   return (
-    <div className="card">
+    <div className="card full">
       {toast}
       <div className="row-between">
         <h2>المشتريات — الأثر المخزني والمحاسبي عند الاستلام فقط</h2>
         <button className="btn" onClick={() => setCreating(true)}>+ فاتورة شراء</button>
       </div>
+      <div className="table-scroll">
       <table className="grid">
         <thead><tr><th>مرجع</th><th>المورد</th><th>أسطر</th><th>ضريبة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
         <tbody>
@@ -66,6 +67,7 @@ export function Purchases() {
           {rows.length === 0 && <tr><td colSpan={6}>لا توجد فواتير شراء</td></tr>}
         </tbody>
       </table>
+      </div>
       {receiving && (
         <Modal title={`استلام ${receiving.ref} + دفع`} onClose={() => setReceiving(null)}>
           <Field label="المدفوع الآن (أغورات، 0 = آجل)"><input type="number" min={0} value={receiving.amount} onChange={(e) => setReceiving({ ...receiving, amount: Number(e.target.value) })} /></Field>

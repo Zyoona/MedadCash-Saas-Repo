@@ -28,6 +28,7 @@ const REV = '4000';
 const RETEXP = '4100';
 const COGS = '5000';
 const ADJ = '5200';
+const CASH_DIFF = '5310';
 
 // ─── Deterministic RNG (mulberry32) ───
 let _s = 20250102;
@@ -66,6 +67,7 @@ const CHART = [
   { code: '5000', name: 'تكلفة البضاعة المباعة', type: 'expense' },
   { code: '5200', name: 'تسويات الجرد (عجز/فائض)', type: 'expense' },
   { code: '5300', name: 'مصروفات عامة', type: 'expense' },
+  { code: '5310', name: 'فروقات الصندوق (عجز/فائض)', type: 'expense' },
 ] as const;
 
 // ─── Catalog definitions (مكتبة قرطاسية + مطبعة + هدايا وتجهيز هدايا) ───
@@ -1118,11 +1120,22 @@ async function main() {
       const opening = Number(s.openingAmount) * 100;
       const expected = Math.round(opening) + cash;
       const actual = shiftId === shifts.sh2 ? expected - 500 : expected; // عجز 5 ₪ موثق
+      const closedAt = s.branchId === main.id ? d(CY, 9, shiftId === shifts.sh1 ? 15 : 16, 21, 30) : d(CY, 9, 16, 21, 0);
       await db.shift.update({
         where: { id: shiftId },
-        data: { closingExpected: dec(expected), closingActual: dec(actual), closedAt: s.branchId === main.id ? d(CY, 9, shiftId === shifts.sh1 ? 15 : 16, 21, 30) : d(CY, 9, 16, 21, 0), closedBy: adminId },
+        data: { closingExpected: dec(expected), closingActual: dec(actual), closedAt, closedBy: adminId },
       });
-      await audit(db, tenantId, { actorId: adminId, branchId: s.branchId, action: 'close_shift', entity: 'shifts', entityId: shiftId, diff: { expectedAgora: expected, actualAgora: actual, diffAgora: actual - expected } });
+      // فرق الصندوق يُرحَّل قيداً مزدوجاً (عجز Dr 5310 / Cr 1000 — فائض بالعكس) كما في ShiftsService.close
+      const diff = actual - expected;
+      let diffEntryId: string | null = null;
+      if (diff !== 0) {
+        diffEntryId = await post(db, tenantId, s.branchId, fys, closedAt, 'shift_close', shiftId,
+          diff < 0 ? `عجز صندوق عند إقفال الوردية ${(-diff / 100).toFixed(2)} ₪` : `فائض صندوق عند إقفال الوردية ${(diff / 100).toFixed(2)} ₪`,
+          diff < 0
+            ? [{ accountCode: CASH_DIFF, debitAgora: -diff }, { accountCode: CASH, creditAgora: -diff }]
+            : [{ accountCode: CASH, debitAgora: diff }, { accountCode: CASH_DIFF, creditAgora: diff }]);
+      }
+      await audit(db, tenantId, { actorId: adminId, branchId: s.branchId, action: 'close_shift', entity: 'shifts', entityId: shiftId, diff: { expectedAgora: expected, actualAgora: actual, diffAgora: diff, entryId: diffEntryId } });
     }
 
     // ── سجل دخول المستخدمين ──
