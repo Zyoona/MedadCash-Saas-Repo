@@ -39,3 +39,4 @@ prisma/*.db-journal
 Thumbs.db
 *.log
 *.log
+*.log

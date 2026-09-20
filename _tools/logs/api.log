@@ -12057,3 +12057,29 @@ medad-api listening on :3000/api
 [32m[Nest] 16480  - [39m09/20/2026, 8:06:14 PM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dashboard/summary, GET} route[39m[38;5;3m +1ms[39m
 [32m[Nest] 16480  - [39m09/20/2026, 8:06:14 PM [32m    LOG[39m [38;5;3m[NestApplication] [39m[32mNest application successfully started[39m[38;5;3m +201ms[39m
 medad-api listening on :3000/api
+[2J[3J[H[[90m8:25:57 PM[0m] File change detected. Starting incremental compilation...
+
+[96msrc/modules/sales/sales.controller.ts[0m:[93m86[0m:[93m78[0m - [91merror[0m[90m TS2554: [0mExpected 4 arguments, but got 5.
+
+[7m86[0m     return this.shifts.close(u.tenantId, id, b.closingActualAgora, u.userId, u.userId);
+[7m  [0m [91m                                                                             ~~~~~~~~[0m
+
+[96msrc/modules/sales/shifts.service.ts[0m:[93m80[0m:[93m25[0m - [91merror[0m[90m TS7006: [0mParameter 's' implicitly has an 'any' type.
+
+[7m80[0m     return sums.reduce((s, r) => s + decToAgora(r._sum.debit as never) - decToAgora(r._sum.credit as never), 0);
+[7m  [0m [91m                        ~[0m
+
+[96msrc/modules/sales/shifts.service.ts[0m:[93m80[0m:[93m28[0m - [91merror[0m[90m TS7006: [0mParameter 'r' implicitly has an 'any' type.
+
+[7m80[0m     return sums.reduce((s, r) => s + decToAgora(r._sum.debit as never) - decToAgora(r._sum.credit as never), 0);
+[7m  [0m [91m                           ~[0m
+
+[[90m8:25:58 PM[0m] Found 3 errors. Watching for file changes.
+
+npm error Lifecycle script `start:dev` failed with error:
+npm error code 4294967295
+npm error path F:\مداد\MedadCash\apps\api
+npm error workspace @medad/api@0.1.0
+npm error location F:\مداد\MedadCash\apps\api
+npm error command failed
+npm error command C:\WINDOWS\system32\cmd.exe /d /s /c nest start --watch

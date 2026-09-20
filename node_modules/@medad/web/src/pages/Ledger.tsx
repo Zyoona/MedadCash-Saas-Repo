@@ -85,9 +85,10 @@ function EntriesTab() {
   };
 
   return (
-    <div className="card">
+    <div className="card full">
       {toast}
       <h2>القيود — قراءة فقط، التصحيح بقيد عكسي فقط</h2>
+      <div className="table-scroll">
       <table className="grid">
         <thead><tr><th>التاريخ</th><th>النوع</th><th>المرجع</th><th>مذكرة</th><th>عكسي؟</th><th></th></tr></thead>
         <tbody>
@@ -106,6 +107,7 @@ function EntriesTab() {
           ))}
         </tbody>
       </table>
+      </div>
       <div className="row2">
         <button className="btn secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>السابق</button>
         <span>صفحة {page} / {Math.max(1, Math.ceil((data?.total ?? 0) / 20))}</span>
@@ -168,7 +170,7 @@ function AccountsTab() {
   };
 
   return (
-    <div className="card">
+    <div className="card full">
       {toast}
       <h2>دليل الحسابات</h2>
       <div className="row2 wrap">
@@ -179,6 +181,7 @@ function AccountsTab() {
         </select>
         <button className="btn" onClick={create} disabled={!form.code || !form.name}>+ حساب مخصص</button>
       </div>
+      <div className="table-scroll">
       <table className="grid">
         <thead><tr><th>كود</th><th>الاسم</th><th>مدين</th><th>دائن</th><th>الرصيد</th><th>إجراءات</th></tr></thead>
         <tbody>
@@ -194,6 +197,7 @@ function AccountsTab() {
           ))}
         </tbody>
       </table>
+      </div>
       <h4>تحويل بين الحسابات</h4>
       <div className="row2 wrap">
         <select value={transfer.fromCode} onChange={(e) => setTransfer({ ...transfer, fromCode: e.target.value })}>
@@ -277,7 +281,7 @@ function BanksTab() {
   };
 
   return (
-    <div className="card">
+    <div className="card full">
       {toast}
       <h2>الحسابات البنكية — تُدار هنا وتظهر تلقائياً ضمن كل خيارات الدفع والتحصيل</h2>
       <div className="row2 wrap">
@@ -288,6 +292,7 @@ function BanksTab() {
         <input type="number" placeholder="رصيد افتتاحي (أغورات)" value={form.openingBalanceAgora} onChange={(e) => setForm({ ...form, openingBalanceAgora: Number(e.target.value) })} style={{ width: 170 }} />
         <button className="btn" onClick={create} disabled={!form.bankName.trim()}>+ حساب بنكي</button>
       </div>
+      <div className="table-scroll">
       <table className="grid">
         <thead><tr><th>البنك</th><th>كود GL</th><th>رقم الحساب / IBAN</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
         <tbody>
@@ -308,6 +313,7 @@ function BanksTab() {
           {rows.length === 0 && <tr><td colSpan={6}>لا حسابات بنكية بعد — أضف أول حساب وسيظهر فوراً في الكاشير والتحصيل والشيكات</td></tr>}
         </tbody>
       </table>
+      </div>
       {editing && (
         <Modal title={`تعديل: ${bankLabel(editing)}`} onClose={() => setEditing(null)}>
           <Field label="اسم البنك"><input value={editing.bankName} onChange={(e) => setEditing({ ...editing, bankName: e.target.value })} /></Field>
@@ -358,7 +364,7 @@ function ChecksTab() {
   };
 
   return (
-    <div className="card">
+    <div className="card full">
       {toast}
       <h2>الشيكات + تنبيه الاستحقاق</h2>
       {alerts.length > 0 && <div className="alert">⚠ {alerts.length} شيك مستحق خلال أسبوع: {alerts.map((c) => c.checkNumber).join('، ')}</div>}
@@ -372,6 +378,7 @@ function ChecksTab() {
         <input placeholder="الطرف" value={form.partyName} onChange={(e) => setForm({ ...form, partyName: e.target.value })} />
         <button className="btn" onClick={create} disabled={!form.checkNumber || !form.amountAgora}>+ تسجيل</button>
       </div>
+      <div className="table-scroll">
       <table className="grid">
         <thead><tr><th>رقم</th><th>اتجاه</th><th>مبلغ</th><th>الاستحقاق</th><th>الحالة</th><th>إجراءات</th></tr></thead>
         <tbody>
@@ -386,13 +393,14 @@ function ChecksTab() {
                 {c.status === 'pending' && <>
                   <button className="btn small" onClick={() => setClearing({ id: c.id, number: c.checkNumber, code: sources[0]?.code ?? '1000' })}>صرف</button>
                   <button className="btn secondary small" onClick={() => bounce(c.id)}>ارتجاع</button>
-                </>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {clearing && (
+                 </>}
+               </td>
+             </tr>
+           ))}
+         </tbody>
+       </table>
+       </div>
+       {clearing && (
         <Modal title={`صرف شيك ${clearing.number}`} onClose={() => setClearing(null)}>
           <Field label="يُودع في">
             <select value={clearing.code} onChange={(e) => setClearing({ ...clearing, code: e.target.value })}>
@@ -429,7 +437,7 @@ function FiscalTab() {
   };
 
   return (
-    <div className="card">
+    <div className="card full">
       {toast}
       <h2>السنوات المالية</h2>
       <div className="row2 wrap">
@@ -438,6 +446,7 @@ function FiscalTab() {
         <input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} />
         <button className="btn" onClick={create} disabled={!form.name}>+ سنة</button>
       </div>
+      <div className="table-scroll">
       <table className="grid">
         <thead><tr><th>السنة</th><th>من</th><th>إلى</th><th>الحالة</th><th></th></tr></thead>
         <tbody>

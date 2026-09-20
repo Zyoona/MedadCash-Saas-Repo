@@ -19,7 +19,17 @@ interface SearchRes {
 interface CartLine { productId: string; variantId: string | null; name: string; imageUrl: string | null; thumbUrl: string | null; qty: number; priceAgora: number; lineDiscountAgora: number }
 interface Payment { method: string; accountCode: string; amountAgora: number }
 interface Customer { id: string; name: string; isCashDefault: boolean }
-interface Shift { id: string; openedAt: string }
+/** وردية الكاشير المفتوحة + مطابقة الصندوق الحية (المتوقع من دفتر الأستاذ لفرع الوردية) */
+interface ShiftInfo { id: string; openedAt: string; openingAmountAgora: number }
+interface ShiftPanel {
+  shift: ShiftInfo | null;
+  expectedAgora: number | null;
+  suggestedOpeningAgora: number | null;
+  boxBalanceAgora: number;
+  otherOpenShifts: number;
+  warnings: string[];
+}
+interface ShiftCloseResult { expectedAgora: number; diffAgora: number; entryId: string | null; warnings: string[] }
 /** فاتورة بيع مفتوحة — لكل زبون سلته وخصوماته ودفعاته المستقلة */
 interface SaleSession { id: string; no: number; customerId: string; cart: CartLine[]; invoiceDiscount: number; discountPct: number; payments: Payment[]; paymentsTouched: boolean }
 
@@ -28,7 +38,8 @@ export function Pos() {
   const [tab, setTab] = useState('sell');
   const [toast, showToast] = useToast();
   const [branchId, setBranchId] = useState('');
-  const [shift, setShift] = useState<Shift | null>(null);
+  const [shiftPanel, setShiftPanel] = useState<ShiftPanel | null>(null);
+  const shift = shiftPanel?.shift ?? null;
   const [customers, setCustomers] = useState<Customer[]>([]);
   const sessionSeq = useRef(1);
 
@@ -69,9 +80,13 @@ export function Pos() {
     });
   }, []);
 
-  useEffect(() => {
+  // لوحة الوردية: مرتبطة بفرع POS المختار (وليس فرع التوكن) حتى تتطابق مع فواتير الشاشة
+  const loadShiftPanel = () => {
     if (!branchId) return;
-    api<Shift | null>('/sales/shifts/current').then(setShift).catch(() => setShift(null));
+    api<ShiftPanel>(`/sales/shifts/panel?branchId=${branchId}`).then(setShiftPanel).catch(() => setShiftPanel(null));
+  };
+  useEffect(() => {
+    loadShiftPanel();
   }, [branchId]);
 
   const patchActive = (fn: (s: SaleSession) => SaleSession) => {
@@ -183,6 +198,7 @@ export function Pos() {
         const rest = ss.filter((x) => x.id !== active.id);
         return rest.length ? rest : [fallback];
       });
+      loadShiftPanel(); // تحديث «المتوقع» الحي لصندوق الوردية بعد ترحيل الفاتورة
     } catch (e) {
       showToast((e as Error).message, 'bad');
     }
