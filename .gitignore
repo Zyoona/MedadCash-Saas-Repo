@@ -24,3 +24,4 @@ _tools/pgsql/*.pid
 F:/مداد/pg-binaries.zip
 .DS_Store
 Thumbs.db
+*.log
