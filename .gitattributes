@@ -1,2 +1,18 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Windows launcher scripts are UTF-16 (wscript reads them natively). Git cannot
+# merge or normalize them, so declare them binary instead of pretending text.
+*.vbs -text
+*.vbe -text
+
+# Native binaries — never diff/merge as text
+*.node binary
+*.dll binary
+*.exe binary
+*.dylib binary
+*.so binary
+*.wasm binary
+
+# Lockfile is machine-independent and huge; avoid noisy conflict markers.
+package-lock.json -diff

@@ -1,15 +1,25 @@
-# node_modules is VENDORED in this project (fully local/offline) — do NOT ignore.
-#
+# ── Dependencies (NOT committed) ─────────────────────────────
+# node_modules is intentionally untracked. It duplicated the workspace through
+# npm junctions (node_modules/@medad/* -> apps/*, packages/*) and carried files
+# that are regenerated on every machine (node_modules/.prisma/client,
+# node_modules/.package-lock.json). That caused constant Git conflicts.
+# Restore it on any machine with:  npm ci   (offline via _tools/npm-cache)
+node_modules/
+
 # IMPORTANT: never use unanchored build-output patterns here (`dist/`, `build/`, `out/`).
 # Without a leading/middle slash they match at ANY depth, which also strips those
-# folders from inside the vendored node_modules (e.g. node_modules/embedded-postgres/dist,
-# node_modules/better-sqlite3/build). That silently breaks the apps on a fresh clone.
-# node_modules/
+# folders from inside vendored dependencies. Keep them anchored to workspace projects.
 *.local
 
 # .env holds local dev secrets (port 5433) — keep ignored, .env.example is the template.
 .env
 !.env.example
+
+# Generated Prisma client / per-machine caches
+.prisma/
+**/.prisma/
+**/.cache/
+**/.vite/
 
 # Local sqlite/db artifacts
 prisma/*.db
@@ -18,9 +28,7 @@ prisma/*.db-journal
 *.sqlite-journal
 
 # Build outputs — anchored to workspace projects only (NOT node_modules)
-/apps/api/dist/
-/apps/web/dist/
-/apps/web/.vite/
+/apps/*/dist/
 /packages/*/dist/
 /build/
 /out/
@@ -37,6 +45,4 @@ prisma/*.db-journal
 # OS / editor noise
 .DS_Store
 Thumbs.db
-*.log
-*.log
 *.log
