@@ -10,7 +10,7 @@ import { computeInvoice } from '@medad/shared-types';
 // Prisma fully mocked; balance of every produced entry verified in-code.
 
  
-function makeDb(opts: { stockQty?: number; customer?: any; stockFind?: any } = {}) {
+function makeDb(opts: { stockQty?: number; customer?: any; stockFind?: any; shift?: any } = {}) {
   const created: { entries: any[]; invoices: any[]; audit: any[]; sync: any[] } = { entries: [], invoices: [], audit: [], sync: [] };
   const accounts = ['1000', '1100', '1200', '1300', '1400', '1410', '1500', '2000', '2100', '3000', '3900', '4000', '4100', '5000', '5200', '5300']
     .map((code) => ({ code, id: `acc-${code}`, isClosed: false }));
@@ -34,6 +34,7 @@ function makeDb(opts: { stockQty?: number; customer?: any; stockFind?: any } = {
     },
     customer: { findFirst: jest.fn().mockResolvedValue(opts.customer ?? { id: 'c1', name: 'زبون نقدي', isCashDefault: true, creditLimit: '0.00' }) },
     invoice: { create: jest.fn(async ({ data }: any) => { created.invoices.push(data); return { id: 'inv1' }; }) },
+    shift: { findFirst: jest.fn(async () => ('shift' in opts ? opts.shift : { id: 'sh1', branchId: 'b1', cashierId: 'u1', closedAt: null })) },
     auditLog: { create: jest.fn(async ({ data }: any) => { created.audit.push(data); return {}; }) },
     syncOperation: { create: jest.fn(async ({ data }: any) => { created.sync.push(data); return { id: 'so1' }; }), aggregate: jest.fn().mockResolvedValue({ _max: { lamport: 0 } }) },
     $transaction: jest.fn((fn: any) => fn(db)),
@@ -167,5 +168,50 @@ describe('POS invoice §9.2 (SalesService)', () => {
         payments: [{ method: 'cash', accountCode: '1000', amountAgora: 5000 }],
       }),
     ).rejects.toThrow('أكبر من الإجمالي');
+  });
+});
+
+// ربط الفاتورة بالوردية (§Phase4): الوردية يجب أن تكون موجودة، مفتوحة، لنفس الفرع، ووردية الكاشير
+// نفسه — وإلا فسدت مطابقة الصندوق (المتوقع يُشتق من حركة صندوق فرع الوردية خلال نافذتها).
+describe('Invoice ↔ shift binding (ربط الفاتورة بالوردية)', () => {
+  const L = [{ variantId: 'v1', qty: 1, unitPriceAgora: 1000 }];
+  const P = [{ method: 'cash', accountCode: '1000', amountAgora: 1000 }];
+  const sell = (db: any, over: Record<string, unknown> = {}, perms: string[] = ['pos.sell']) =>
+    buildSales(db).createInvoice('t1', { userId: 'u1', perms }, { branchId: 'b1', lines: L, payments: P, ...over });
+
+  test('بلا shiftId تُقبل (الوردية اختيارية)', async () => {
+    const { db, created } = makeDb();
+    await sell(db);
+    expect(created.invoices[0].shiftId).toBeNull();
+  });
+
+  test('وردية مفتوحة لنفس الكاشير/الفرع → تُسند الفاتورة إليها', async () => {
+    const { db, created } = makeDb();
+    await sell(db, { shiftId: 'sh1' });
+    expect(created.invoices[0].shiftId).toBe('sh1');
+  });
+
+  test('وردية غير موجودة → رفض', async () => {
+    const { db } = makeDb({ shift: null });
+    await expect(sell(db, { shiftId: 'sh404' })).rejects.toThrow('الوردية غير موجودة');
+  });
+
+  test('وردية مغلقة → رفض', async () => {
+    const { db } = makeDb({ shift: { id: 'sh1', branchId: 'b1', cashierId: 'u1', closedAt: new Date() } });
+    await expect(sell(db, { shiftId: 'sh1' })).rejects.toThrow('وردية مغلقة');
+  });
+
+  test('وردية فرع آخر → رفض', async () => {
+    const { db } = makeDb({ shift: { id: 'sh1', branchId: 'b2', cashierId: 'u1', closedAt: null } });
+    await expect(sell(db, { shiftId: 'sh1' })).rejects.toThrow('فرعاً غير فرع الفاتورة');
+  });
+
+  test('وردية كاشير آخر → ممنوع بلا صلاحية، ومقبول مع pos.shift_any', async () => {
+    const other = { id: 'sh1', branchId: 'b1', cashierId: 'u2', closedAt: null };
+    const { db } = makeDb({ shift: other });
+    await expect(sell(db, { shiftId: 'sh1' })).rejects.toBeInstanceOf(ForbiddenException);
+    const { db: db2, created } = makeDb({ shift: other });
+    await sell(db2, { shiftId: 'sh1' }, ['pos.sell', 'pos.shift_any']);
+    expect(created.invoices[0].shiftId).toBe('sh1');
   });
 });

@@ -123,7 +123,11 @@ export function Dashboard() {
                 : <Badge tone="warn">لا نسخ بعد</Badge>}
             </div>
           </div>
-          <div className="kpi"><div className="label">الوردية الحالية</div><div className="value">{s.openShift ? 'مفتوحة' : 'مغلقة'}</div></div>
+          <div className="kpi">
+            <div className="label">الوردية الحالية</div>
+            <div className="value">{s.openShift ? 'مفتوحة' : 'مغلقة'}</div>
+            {s.openShift && <small className="muted">عدّ افتتاحي {money(s.openShift.openingAmountAgora)}</small>}
+          </div>
         </div>
         {alerts.map((a, i) => <div key={i} className={`alert ${a.tone === 'bad' ? 'bad' : ''}`}>{a.text}</div>)}
         {s.banks.length > 0 && (

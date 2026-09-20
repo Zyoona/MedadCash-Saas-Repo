@@ -40,6 +40,8 @@ export function Pos() {
   const [branchId, setBranchId] = useState('');
   const [shiftPanel, setShiftPanel] = useState<ShiftPanel | null>(null);
   const shift = shiftPanel?.shift ?? null;
+  // تجاوز «صندوق الفرع واحد»: مدير/محاسب بصلاحية pos.shift_any يفتح وردية فوق وردية كاشير آخر
+  const canShareBox = !!user?.perms.includes('pos.shift_any') || !!user?.perms.includes('*');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const sessionSeq = useRef(1);
 
@@ -231,7 +233,7 @@ export function Pos() {
       {toast}
       <div className="pos-toolbar">
         <Tabs active={tab} onChange={setTab} tabs={[{ id: 'sell', label: 'بيع' }, { id: 'return', label: 'مرتجع' }, { id: 'quotes', label: 'عروض الأسعار' }]} />
-        <ShiftBanner panel={shiftPanel} onOpen={openShift} onClose={closeShift} />
+        <ShiftBanner panel={shiftPanel} allowSharedBox={canShareBox} onOpen={openShift} onClose={closeShift} />
       </div>
       {tab === 'sell' && active && (
         <>
@@ -372,7 +374,7 @@ export function Pos() {
  *  - وردية مفتوحة: «المتوقع» = الافتتاح + صافي حركة 1000 للفرع خلال نافذة الوردية، وحقل الفعلي
  *    للعدّ عند الإقفال؛ الفرق (عجز/فائض) يُرحَّل قيداً مزدوجاً على 5310 عند الإقفال.
  */
-function ShiftBanner({ panel, onOpen, onClose }: { panel: ShiftPanel | null; onOpen: (n: number) => void; onClose: (n: number) => void }) {
+function ShiftBanner({ panel, allowSharedBox, onOpen, onClose }: { panel: ShiftPanel | null; allowSharedBox: boolean; onOpen: (n: number) => void; onClose: (n: number) => void }) {
   const shift = panel?.shift ?? null;
   const expected = panel?.expectedAgora ?? 0;
   const [opening, setOpening] = useState(0);
@@ -386,12 +388,16 @@ function ShiftBanner({ panel, onOpen, onClose }: { panel: ShiftPanel | null; onO
     setActual(expected);
   }, [shift?.id]);
   const diff = actual - expected;
+  // صندوق الفرع واحد: لا تُفتح وردية ثانية فوق وردية كاشير آخر إلا بصلاحية pos.shift_any
+  const blockedBySharedBox = (panel?.otherOpenShifts ?? 0) > 0 && !allowSharedBox;
+  const boxCaption = <span className="shift-caption" title="رصيد حساب الصندوق (1000) لفرع POS من دفتر الأستاذ">صندوق الفرع {money(panel?.boxBalanceAgora ?? 0)}</span>;
 
   if (shift) {
     return (
       <div className="shift-banner open">
         <span className="shift-status">وردية مفتوحة · {new Date(shift.openedAt).toLocaleTimeString('ar')}</span>
         <span className="shift-caption" title="الافتتاح + صافي حركة حساب الصندوق (1000) لفرع الوردية من دفتر الأستاذ">المتوقع {money(expected)}</span>
+        {boxCaption}
         <span className="shift-amount"><span className="shift-caption">الفعلي (عدّ)</span><SplitAgora agora={actual} onAgora={setActual} label="الفعلي" /></span>
         {diff !== 0 && <span className={`shift-diff ${diff < 0 ? 'short' : 'over'}`}>{diff < 0 ? 'عجز' : 'فائض'} {money(Math.abs(diff))}</span>}
         <button className="btn small" onClick={() => onClose(actual)}>إقفال</button>
@@ -401,9 +407,10 @@ function ShiftBanner({ panel, onOpen, onClose }: { panel: ShiftPanel | null; onO
   return (
     <div className="shift-banner">
       <span className="shift-status">لا وردية مفتوحة</span>
-      <span className="shift-caption" title="رصيد حساب الصندوق (1000) لفرع POS من دفتر الأستاذ">صندوق الفرع {money(panel?.boxBalanceAgora ?? 0)}</span>
-      <span className="shift-amount"><span className="shift-caption">افتتاح (عدّ)</span><SplitAgora agora={opening} onAgora={setOpening} label="الافتتاح" /></span>
-      <button className="btn small" onClick={() => onOpen(opening)}>افتتاح</button>
+      {boxCaption}
+      {blockedBySharedBox && <span className="shift-caption shift-blocked" title="صندوق الفرع واحد — يجب إقفال وردية الكاشير الآخر قبل افتتاح وردية جديدة">وردية أخرى مفتوحة في الفرع</span>}
+      <span className="shift-amount"><span className="shift-caption">افتتاح (عدّ)</span><SplitAgora agora={opening} onAgora={setOpening} label="الافتتاح" disabled={blockedBySharedBox} /></span>
+      <button className="btn small" disabled={blockedBySharedBox} onClick={() => onOpen(opening)}>افتتاح</button>
     </div>
   );
 }

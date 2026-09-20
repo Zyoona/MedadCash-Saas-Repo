@@ -71,7 +71,7 @@ export class SalesController {
   @Post('shifts/open')
   @RequirePerm('pos.shift')
   openShift(@CurrentUser() u: AuthUser, @Body() b: { branchId?: string; openingAmountAgora: number }) {
-    return this.shifts.open(u.tenantId, b.branchId ?? u.branchId ?? '', u.userId, b.openingAmountAgora, u.userId);
+    return this.shifts.open(u.tenantId, b.branchId ?? u.branchId ?? '', b.openingAmountAgora, { userId: u.userId, perms: u.perms, branchId: u.branchId });
   }
 
   @Get('shifts/current')

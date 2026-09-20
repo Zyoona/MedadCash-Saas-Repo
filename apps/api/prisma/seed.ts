@@ -1,5 +1,5 @@
 import { PrismaClient, Prisma } from '@prisma/client';
-import { computeInvoice } from '@medad/shared-types';
+import { computeInvoice, fromAgora } from '@medad/shared-types';
 import { allocateProRata, agoraToDec, mulBps } from '../src/common/money.util';
 import * as bcrypt from 'bcryptjs';
 import * as dotenv from 'dotenv';
@@ -1130,7 +1130,7 @@ async function main() {
       let diffEntryId: string | null = null;
       if (diff !== 0) {
         diffEntryId = await post(db, tenantId, s.branchId, fys, closedAt, 'shift_close', shiftId,
-          diff < 0 ? `عجز صندوق عند إقفال الوردية ${(-diff / 100).toFixed(2)} ₪` : `فائض صندوق عند إقفال الوردية ${(diff / 100).toFixed(2)} ₪`,
+          diff < 0 ? `عجز صندوق عند إقفال الوردية ${fromAgora(-diff)} ₪` : `فائض صندوق عند إقفال الوردية ${fromAgora(diff)} ₪`,
           diff < 0
             ? [{ accountCode: CASH_DIFF, debitAgora: -diff }, { accountCode: CASH, creditAgora: -diff }]
             : [{ accountCode: CASH, debitAgora: diff }, { accountCode: CASH_DIFF, creditAgora: diff }]);
