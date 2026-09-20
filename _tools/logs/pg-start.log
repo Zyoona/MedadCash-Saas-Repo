@@ -18,3 +18,4 @@
 [pg] postgres start requested, port=5433
 [pg] data dir not initialised — run pg-local.js start first
 [pg] data dir not initialised — run pg-local.js start first
+[pg] data dir not initialised — run pg-local.js start first
