@@ -43,8 +43,18 @@ function clearPidFiles() {
 
 if (cmd === 'start') {
   if (!fs.existsSync(path.join(DATA, 'PG_VERSION'))) {
-    console.error('[pg] data dir not initialised — run pg-local.js start first');
-    process.exit(1);
+    // تهيئة تلقائية عند أول تشغيل على جهاز/مسار جديد — لا حاجة لأي خطوة يدوية.
+    console.log('[pg] data dir not initialised at: ' + DATA);
+    console.log('[pg] running first-time setup (initdb + create medad)...');
+    const setup = spawnSync(process.execPath, [path.join(__dirname, 'pg-local.js'), 'setup'], { stdio: 'inherit' });
+    if (setup.error || setup.status !== 0) {
+      console.error('[pg] first-time setup failed. data dir: ' + DATA);
+      process.exit(1);
+    }
+    if (!fs.existsSync(path.join(DATA, 'PG_VERSION'))) {
+      console.error('[pg] setup finished but data dir is still not initialised: ' + DATA);
+      process.exit(1);
+    }
   }
   const existing = readPid();
   if (pidIsPostgres(existing)) {
