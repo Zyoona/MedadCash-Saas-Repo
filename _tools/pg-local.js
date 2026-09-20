@@ -38,6 +38,25 @@ async function main() {
     console.log('[pg] version:', r.rows[0].version.slice(0, 60));
     await client.end();
     // keep running: stop only via "stop" command
+  } else if (cmd === 'setup') {
+    // تهيئة لمرة واحدة تعمل من أي قرص/مسار: إنشاء مجلد البيانات وقاعدة medad،
+    // ثم إيقاف العملية المؤقتة حتى يتولّى pg-run.js تشغيل النسخة الدائمة.
+    try {
+      await pg.initialise();
+      console.log('[pg] initialised at', DATA_DIR);
+    } catch (e) {
+      console.log('[pg] initialise skipped:', e.message);
+    }
+    await pg.start();
+    console.log('[pg] temporary cluster started for setup');
+    try {
+      await pg.createDatabase('medad');
+      console.log('[pg] database medad created');
+    } catch (e) {
+      console.log('[pg] createDatabase skipped:', e.message);
+    }
+    await pg.stop();
+    console.log('[pg] setup complete');
   } else if (cmd === 'stop') {
     await pg.stop();
     console.log('[pg] stopped');
