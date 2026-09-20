@@ -2,7 +2,16 @@
 // Uses embedded-postgres binaries vendored in node_modules.
 // Data lives in _tools/pgsql/data, controlled port 5433 to avoid clashes.
 const path = require('path');
-const EmbeddedPostgres = require('embedded-postgres').default;
+
+let EmbeddedPostgres;
+try {
+  EmbeddedPostgres = require('embedded-postgres').default;
+} catch (e) {
+  console.error('[pg] missing dependency: embedded-postgres — node_modules غير مكتمل.');
+  console.error('[pg] الحل: افتح الطرفية في جذر المشروع ثم نفّذ:  npm install');
+  console.error('[pg] تفاصيل:', e.message);
+  process.exit(1);
+}
 
 // مسار بيانات Postgres نسبي للمشروع (مجلد _tools بجوار هذا الملف) بدلاً من مسار قرص ثابت.
 const DATA_DIR = path.join(__dirname, 'pgsql', 'data');

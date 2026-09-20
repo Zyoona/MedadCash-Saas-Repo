@@ -3,7 +3,7 @@ import { api, auditEvent, money } from '../api.js';
 import { computeInvoice } from '@medad/shared-types';
 import { Badge, Field, Money, ProductImage, SplitAgora, Tabs, useToast } from '../ui.js';
 import { useAuth } from '../auth.js';
-import { bankLabel, PAY_METHODS, useBanks, usePaySources } from '../banks.js';
+import { bankLabel, CASH_CODE, PAY_METHODS, useBanks, usePaySources } from '../banks.js';
 
 // POS (§Phase4): بحث اسم/SKU/باركود + خصم المنتج وفاتورة + ضريبة أخيراً + دفع متعدد
 // + إرجاع الباقي بطريقة مختلفة (سالب) + مرتجعات + عروض أسعار — بنفس ترتيب الحساب الملزم.
@@ -21,7 +21,7 @@ interface Payment { method: string; accountCode: string; amountAgora: number }
 interface Customer { id: string; name: string; isCashDefault: boolean }
 interface Shift { id: string; openedAt: string }
 /** فاتورة بيع مفتوحة — لكل زبون سلته وخصوماته ودفعاته المستقلة */
-interface SaleSession { id: string; no: number; customerId: string; cart: CartLine[]; invoiceDiscount: number; discountPct: number; payments: Payment[] }
+interface SaleSession { id: string; no: number; customerId: string; cart: CartLine[]; invoiceDiscount: number; discountPct: number; payments: Payment[]; paymentsTouched: boolean }
 
 export function Pos() {
   const { user } = useAuth();
@@ -35,7 +35,7 @@ export function Pos() {
   const newSession = (): SaleSession => {
     const no = sessionSeq.current++;
     const cash = customers.find((c) => c.isCashDefault);
-    return { id: `pos-${no}`, no, customerId: cash?.id ?? '', cart: [], invoiceDiscount: 0, discountPct: 0, payments: [] };
+    return { id: `pos-${no}`, no, customerId: cash?.id ?? '', cart: [], invoiceDiscount: 0, discountPct: 0, payments: [], paymentsTouched: false };
   };
 
   const [sessions, setSessions] = useState<SaleSession[]>(() => [newSession()]);
@@ -91,7 +91,8 @@ export function Pos() {
     }));
   };
   const patchPayments = (fn: (ps: Payment[]) => Payment[]) => {
-    patchActive((s) => ({ ...s, payments: fn(s.payments) }));
+    // أي تعديل يدوي على الدفعات يوقف تتبع الدفعة النقدية الافتراضية لهذه الفاتورة
+    patchActive((s) => ({ ...s, payments: fn(s.payments), paymentsTouched: true }));
   };
 
   const search = async (term: string) => {
@@ -133,6 +134,18 @@ export function Pos() {
   const totals = useMemo(() => (active ? computeTotals(active) : null), [active, taxBps]);
   const paidNet = (active?.payments ?? []).reduce((s, p) => s + p.amountAgora, 0);
   const remainder = (totals?.grandTotalAgora ?? 0) - paidNet;
+
+  // دفعة نقدية افتراضية بقيمة المبلغ النهائي — تتبع الإجمالي تلقائياً حتى يعدّل الكاشير الدفعات يدوياً
+  useEffect(() => {
+    if (!totals) return;
+    const amount = totals.grandTotalAgora;
+    setSessions((ss) => ss.map((s) => {
+      if (s.id !== activeId || s.paymentsTouched) return s;
+      const cur = s.payments;
+      if (cur.length === 1 && cur[0].method === 'cash' && cur[0].accountCode === CASH_CODE && cur[0].amountAgora === amount) return s;
+      return { ...s, payments: [{ method: 'cash', accountCode: CASH_CODE, amountAgora: amount }] };
+    }));
+  }, [totals, activeId]);
 
   const openNewSession = () => {
     if (sessions.length >= MAX_OPEN_INVOICES) {
@@ -317,7 +330,7 @@ export function Pos() {
                 ))}
               </div>
               <div className="row2 pos-pay-actions">
-                <button className="btn secondary" onClick={() => patchPayments((ps) => [...ps, { method: 'cash', accountCode: '1000', amountAgora: remainder > 0 ? remainder : 0 }])}>+ دفعة</button>
+                <button className="btn secondary" onClick={() => patchPayments((ps) => [...ps, { method: 'cash', accountCode: CASH_CODE, amountAgora: remainder > 0 ? remainder : 0 }])}>+ دفعة</button>
                 <button className="btn secondary" onClick={() => patchPayments((ps) => [...ps, { method: 'bank', accountCode: defaultBankCode, amountAgora: remainder < 0 ? remainder : 0 }])}>+ إرجاع باقي</button>
               </div>
               <button className="btn wide" disabled={!totals || active.cart.length === 0 || remainder < 0} onClick={checkout}>إتمام البيع — فاتورة {active.no}</button>

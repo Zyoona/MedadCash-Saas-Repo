@@ -1,30 +1,40 @@
 # node_modules is VENDORED in this project (fully local/offline) — do NOT ignore.
+#
+# IMPORTANT: never use unanchored build-output patterns here (`dist/`, `build/`, `out/`).
+# Without a leading/middle slash they match at ANY depth, which also strips those
+# folders from inside the vendored node_modules (e.g. node_modules/embedded-postgres/dist,
+# node_modules/better-sqlite3/build). That silently breaks the apps on a fresh clone.
 # node_modules/
-dist/
-build/
-out/
 *.local
+
 # .env holds local dev secrets (port 5433) — keep ignored, .env.example is the template.
 .env
 !.env.example
+
+# Local sqlite/db artifacts
 prisma/*.db
 prisma/*.db-journal
 *.sqlite
 *.sqlite-journal
-apps/web/dist/
-apps/web/.vite/
-apps/api/dist/
-backups/
-uploads/
-# Local tooling (large binaries) — keep node binaries, ignore caches/logs/data.
-_tools/npm-cache/
-_tools/pgsql/data/
-_tools/pgsql/*.log
-_tools/pgsql/*.pid
-F:/مداد/pg-binaries.zip
+
+# Build outputs — anchored to workspace projects only (NOT node_modules)
+/apps/api/dist/
+/apps/web/dist/
+/apps/web/.vite/
+/packages/*/dist/
+/build/
+/out/
+
+# Local tooling output — keep node binaries, ignore caches/logs/data.
+/_tools/npm-cache/
+/_tools/pgsql/data/
+/_tools/pgsql/*.log
+/_tools/pgsql/*.pid
+/_tools/backups/
+/_tools/uploads/
+/_tools/logs/
+
+# OS / editor noise
 .DS_Store
 Thumbs.db
 *.log
-*.log
-_tools/logs/pg-start.log
-/_tools/logs
