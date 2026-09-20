@@ -38,7 +38,7 @@ const LEGACY_LINES: L[] = [
   line(CASH, 'collection', 2000, 0, 3),
   line(CASH, 'supplier_payment', 0, 3000, 4),
   line(CASH, 'opening_balance', 999999, 0, 1), // مستبعد: تعرف أولي للرصيد
-  line(CASH, 'shift_close', 0, 999999, 1), // مستبعد: قيد إقفال
+  line(CASH, 'shift_close', 0, 999999, 1, 'b1', 'sh1'), // مستبعد: قيد إقفال هذه الوردية نفسها
   line(CASH, 'sale', 7777, 0, -1), // مستبعد: قبل افتتاح الوردية
   line(CASH, 'sale', 8888, 0, 1, 'b2'), // مستبعد: فرع آخر
 ];
