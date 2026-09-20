@@ -33,9 +33,10 @@ const DRAWER_BASE = 1010;
 const DRAWER_MAX = 1099;
 
 /** مصادر لا تُحتسب ضمن حركة صندوق الفرع في مسار المطابقة القديم:
- *  opening_balance = تعرف أولي للرصيد (يظهر ضمن العدّ الافتتاحي نفسه وليس حركة نقدية)،
- *  shift_close = قيد الإقفال (حتى لا يُحتسب مرتين). */
-const NON_CASH_FLOW_SOURCES = ['opening_balance', 'shift_close'];
+ *  opening_balance = تعرف أولي للرصيد (يظهر ضمن العدّ الافتتاحي نفسه وليس حركة نقدية).
+ *  أما قيد إقفال الوردية نفسها فيُستثنى بمعرف المصدر (NOT sourceType+sourceId) حتى تبقى
+ *  تسليمات دروج الورديات الأخرى — وهي نقد دخل الصندوق فعلاً — محسوبة ضمن النافذة. */
+const NON_CASH_FLOW_SOURCES = ['opening_balance'];
 
 export interface ShiftActor {
   userId: string;
@@ -66,7 +67,7 @@ export class ShiftsService {
     db: Db,
     tenantId: string,
     codes: string[],
-    opts: { branchId?: string; from?: Date; to?: Date; toExclusive?: Date; excludeSources?: string[] } = {},
+    opts: { branchId?: string; from?: Date; to?: Date; toExclusive?: Date; excludeSources?: string[]; notEntry?: { sourceType: string; sourceId: string } } = {},
   ) {
     const empty = { netAgora: 0, bySource: [] as { sourceType: string; amountAgora: number }[] };
     if (!codes.length) return empty;
@@ -79,6 +80,7 @@ export class ShiftsService {
             ? { date: { ...(opts.from ? { gte: opts.from } : {}), ...(opts.to ? { lte: opts.to } : {}), ...(opts.toExclusive ? { lt: opts.toExclusive } : {}) } }
             : {}),
           ...(opts.excludeSources?.length ? { sourceType: { notIn: opts.excludeSources } } : {}),
+          ...(opts.notEntry ? { NOT: { sourceType: opts.notEntry.sourceType, sourceId: opts.notEntry.sourceId } } : {}),
         },
         account: { code: { in: codes } },
       },
