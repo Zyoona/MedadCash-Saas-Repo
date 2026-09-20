@@ -10,6 +10,7 @@ import { Pos } from './pages/Pos.js';
 import { Sales } from './pages/Sales.js';
 import { Inventory } from './pages/Inventory.js';
 import { Purchases } from './pages/Purchases.js';
+import { PurchaseDetails } from './pages/PurchaseDetails.js';
 import { Parties } from './pages/Parties.js';
 import { LedgerPage } from './pages/Ledger.js';
 import { Counts } from './pages/Counts.js';
@@ -37,6 +38,7 @@ const router = createHashRouter([
       { path: 'sales', element: <Sales /> },
       { path: 'inventory', element: <Inventory /> },
       { path: 'purchases', element: <Purchases /> },
+      { path: 'purchases/:id', element: <PurchaseDetails /> },
       { path: 'parties', element: <Parties /> },
       { path: 'ledger', element: <LedgerPage /> },
       { path: 'counts', element: <Counts /> },

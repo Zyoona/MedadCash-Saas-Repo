@@ -705,3 +705,44 @@ Re-optimizing dependencies because lockfile has changed
 
   [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5173[22m/[39m
 [2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
+
+> medad-cash@0.1.0 dev:web
+> npm run dev -w apps/web
+
+
+> @medad/web@0.1.0 dev
+> vite --port 5173 --strictPort --host 127.0.0.1
+
+
+  [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m456[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5173[22m/[39m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
+[2m7:24:08 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx[22m
+[2m7:24:13 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx[22m
+[2m7:24:41 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx[22m
+[2m7:25:03 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx[22m
+[2m7:25:26 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx[22m
+[2m7:25:52 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx[22m
+[2m7:26:39 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx, /src/Loader.tsx, /src/pages/Parties.tsx, /src/auth.tsx, /src/pages/Counts.tsx, /src/pages/Inventory.tsx, /src/pages/Purchases.tsx, /src/pages/Labels.tsx, /src/pages/Sync.tsx, /src/pages/Tasks.tsx, /src/pages/Settings.tsx, /src/pages/Dashboard.tsx, /src/pages/Sales.tsx, /src/pages/Transfers.tsx, /src/pages/Ledger.tsx, /src/ui.tsx[22m
+[2m7:26:39 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx, /src/Loader.tsx, /src/pages/Parties.tsx, /src/auth.tsx, /src/pages/Counts.tsx, /src/pages/Inventory.tsx, /src/pages/Purchases.tsx, /src/pages/Labels.tsx, /src/pages/Sync.tsx, /src/pages/Tasks.tsx, /src/pages/Settings.tsx, /src/pages/Dashboard.tsx, /src/pages/Sales.tsx, /src/pages/Transfers.tsx, /src/pages/Ledger.tsx, /src/ui.tsx[22m
+[2m7:26:39 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx, /src/Loader.tsx, /src/pages/Parties.tsx, /src/auth.tsx, /src/pages/Counts.tsx, /src/pages/Inventory.tsx, /src/pages/Purchases.tsx, /src/pages/Labels.tsx, /src/pages/Sync.tsx, /src/pages/Tasks.tsx, /src/pages/Settings.tsx, /src/pages/Dashboard.tsx, /src/pages/Sales.tsx, /src/pages/Transfers.tsx, /src/pages/Ledger.tsx, /src/ui.tsx[22m
+[2m7:26:39 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx, /src/Loader.tsx, /src/pages/Parties.tsx, /src/auth.tsx, /src/pages/Counts.tsx, /src/pages/Inventory.tsx, /src/pages/Purchases.tsx, /src/pages/Labels.tsx, /src/pages/Sync.tsx, /src/pages/Tasks.tsx, /src/pages/Settings.tsx, /src/pages/Dashboard.tsx, /src/pages/Sales.tsx, /src/pages/Transfers.tsx, /src/pages/Ledger.tsx, /src/ui.tsx[22m
+[2m7:26:39 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx, /src/Loader.tsx, /src/pages/Parties.tsx, /src/auth.tsx, /src/pages/Counts.tsx, /src/pages/Inventory.tsx, /src/pages/Purchases.tsx, /src/pages/Labels.tsx, /src/pages/Sync.tsx, /src/pages/Tasks.tsx, /src/pages/Settings.tsx, /src/pages/Dashboard.tsx, /src/pages/Sales.tsx, /src/pages/Transfers.tsx, /src/pages/Ledger.tsx, /src/ui.tsx[22m
+[2m7:26:39 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx, /src/Loader.tsx, /src/pages/Parties.tsx, /src/auth.tsx, /src/pages/Counts.tsx, /src/pages/Inventory.tsx, /src/pages/Purchases.tsx, /src/pages/Labels.tsx, /src/pages/Sync.tsx, /src/pages/Tasks.tsx, /src/pages/Settings.tsx, /src/pages/Dashboard.tsx, /src/pages/Sales.tsx, /src/pages/Transfers.tsx, /src/pages/Ledger.tsx, /src/ui.tsx[22m
+[2m8:11:32 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Inventory.tsx[22m
+[2m8:11:37 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Inventory.tsx[22m
+[2m8:14:09 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/main.tsx[22m
+[2m8:14:09 PM[22m [36m[1m[vite][22m[39m [33mhmr invalidate [39m[2m/src/main.tsx[22m Could not Fast Refresh ("true" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+[2m8:14:09 PM[22m [36m[1m[vite][22m[39m [32mpage reload [39m[2msrc/main.tsx[22m
+[2m8:14:13 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/main.tsx[22m
+[2m8:14:13 PM[22m [36m[1m[vite][22m[39m [33mhmr invalidate [39m[2m/src/main.tsx[22m Could not Fast Refresh ("true" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+[2m8:14:13 PM[22m [36m[1m[vite][22m[39m [32mpage reload [39m[2msrc/main.tsx[22m
+[2m8:14:50 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Purchases.tsx[22m
+[2m8:15:08 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/theme.css[22m
+[2m8:15:27 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/PurchaseDetails.tsx[22m
+[2m8:18:38 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/theme.css[22m
+[2m8:19:38 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/ui.tsx[22m
+[2m8:19:38 PM[22m [36m[1m[vite][22m[39m [33mhmr invalidate [39m[2m/src/ui.tsx[22m Could not Fast Refresh ("downloadCsv" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+[2m8:19:38 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/Shell.tsx, /src/pages/Parties.tsx, /src/pages/Counts.tsx, /src/pages/Pos.tsx, /src/pages/Inventory.tsx, /src/pages/Purchases.tsx, /src/pages/Labels.tsx, /src/pages/Sync.tsx, /src/pages/Tasks.tsx, /src/pages/Settings.tsx, /src/pages/Dashboard.tsx, /src/pages/Sales.tsx, /src/pages/Transfers.tsx, /src/pages/Ledger.tsx, /src/pages/PurchaseDetails.tsx[22m
+[2m8:19:51 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/theme.css[22m
