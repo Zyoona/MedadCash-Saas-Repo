@@ -154,7 +154,11 @@ export class ShiftsService {
       return { expectedAgora: detail.netAgora, drawerAccountCode, basis: 'drawer', movementsAgora: detail.netAgora, movementsBySource: detail.bySource };
     }
     const flow = await this.ledgerDetail(db, tenantId, [CASH], {
-      branchId: shift.branchId, from: shift.openedAt, to: at, excludeSources: NON_CASH_FLOW_SOURCES,
+      branchId: shift.branchId,
+      from: shift.openedAt,
+      to: at,
+      excludeSources: NON_CASH_FLOW_SOURCES,
+      notEntry: { sourceType: 'shift_close', sourceId: shift.id },
     });
     return {
       expectedAgora: decToAgora(shift.openingAmount) + flow.netAgora,
