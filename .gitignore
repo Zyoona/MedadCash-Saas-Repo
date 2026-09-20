@@ -21,10 +21,13 @@ node_modules/
 **/.cache/
 **/.vite/
 
-# Local sqlite/db artifacts
-prisma/*.db
-prisma/*.db-journal
+# ── Local database files — NEVER pushed ─────────────────────
+# `prisma/*.db` alone was anchored to the repo root, so a DB created next to the
+# real schema (apps/api/prisma/*.db) was NOT ignored. `**/prisma/*.db` covers it.
+**/prisma/*.db
+**/prisma/*.db-journal
 *.sqlite
+*.sqlite3
 *.sqlite-journal
 
 # Build outputs — anchored to workspace projects only (NOT node_modules)
@@ -35,9 +38,10 @@ prisma/*.db-journal
 
 # Local tooling output — keep node binaries, ignore caches/logs/data.
 /_tools/npm-cache/
-/_tools/pgsql/data/
-/_tools/pgsql/*.log
-/_tools/pgsql/*.pid
+# The whole embedded Postgres cluster (data pages + WAL + pid + log) is
+# per-machine. Ignoring the folder — not just data/ — guarantees no DB file can
+# ever be staged or pushed, which is what caused cross-device merge conflicts.
+/_tools/pgsql/
 /_tools/backups/
 /_tools/uploads/
 /_tools/logs/

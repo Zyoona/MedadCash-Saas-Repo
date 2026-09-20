@@ -264,7 +264,7 @@ export class ShiftsService {
     const expectedAgora = storedExpectedAgora ?? recomputedExpectedAgora;
     const warnings: string[] = [];
     if (storedExpectedAgora !== null && storedExpectedAgora !== recomputedExpectedAgora) {
-      warnings.push('أُضيفت حركات نقدية مؤثرة على نافذة الوردية بعد الإقفال — راجع القيود اللاحقة');
+      warnings.push('المتوقع المخزن ≠ المعاد احتسابه من دفتر الأستاذ: حركات سُجلت بعد الإقفال، أو وردية أُقفلت بالآلية السابقة (قبل ربط الوردية بحركة الصندوق)');
     }
     return {
       shift: {

@@ -302,6 +302,6 @@ describe('Shifts — report (تقرير الوردية)', () => {
     const res: any = await build(db).report('t1', 'sh1');
     expect(res.cash.expectedAgora).toBe(1000); // المخزن هو المعتمد
     expect(res.cash.recomputedExpectedAgora).toBe(EXPECTED);
-    expect(res.warnings.join(' ')).toContain('بعد الإقفال');
+    expect(res.warnings.join(' ')).toContain('المتوقع المخزن');
   });
 });

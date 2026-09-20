@@ -20,6 +20,7 @@ model Tenant {
   users     User[]
   accounts  Account[]
   bankAccounts BankAccount[]
+  cashDrawers CashDrawer[]
   products  Product[]
   customers Customer[]
   suppliers Supplier[]
@@ -73,6 +74,7 @@ model User {
   deletedAt           DateTime?
 
   auditLogs AuditLog[]
+  cashDrawers CashDrawer[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -586,6 +588,8 @@ model Shift {
   branchId        String
   branch          Branch    @relation(fields: [branchId], references: [id])
   cashierId       String
+  drawerId        String?   // درج/عهدة الكاشير (حساب GL مستقل) — null للورديات السابقة لهذا النموذج
+  drawer          CashDrawer? @relation(fields: [drawerId], references: [id])
   openingAmount   Decimal   @db.Decimal(18, 2)
   closingExpected Decimal?  @db.Decimal(18, 2)
   closingActual   Decimal?  @db.Decimal(18, 2)
@@ -596,7 +600,34 @@ model Shift {
   invoices Invoice[]
 
   @@index([tenantId, branchId])
+  @@index([tenantId, drawerId])
   @@map("shifts")
+}
+
+/// درج/صندوق الكاشير (§Phase4): حساب GL أصلي مستقل لكل كاشير يحمل عهدته النقدية خلال الوردية.
+/// الافتتاح: Dr درج / Cr 1000 (تحويل العهدة من صندوق الفرع).
+/// الإقفال:  Dr 1000 (المُسلَّم فعلياً) + Dr/Cr 5310 (العجز/الفائض) / Cr درج (رصيد العهدة) ⇒ يعود الدرج صفراً.
+/// المتوقع = رصيد حساب الدرج من دفتر الأستاذ (لا يُخزَّن أي رصيد مشتق).
+/// الكود يُخصَّص تلقائياً من 1010 صعوداً ولا يُعاد تدويره (سجل محاسبي دائم).
+model CashDrawer {
+  id            String    @id @default(uuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  cashierId     String
+  cashier       User      @relation(fields: [cashierId], references: [id])
+  name          String
+  glAccountCode String
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  shifts Shift[]
+
+  @@unique([tenantId, cashierId])
+  @@unique([tenantId, glAccountCode])
+  @@index([tenantId])
+  @@map("cash_drawers")
 }
 
 model Task {
