@@ -27,3 +27,4 @@ Thumbs.db
 *.log
 *.log
 _tools/logs/pg-start.log
+/_tools/logs
