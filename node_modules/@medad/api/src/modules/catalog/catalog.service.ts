@@ -1,8 +1,12 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import * as fs from 'fs';
+import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { agoraToDec, decToAgora } from '../../common/money.util.js';
 import { auditTx, type Db } from '../../common/ctx.js';
+import { PRODUCT_IMAGE_MAX_BYTES, UPLOAD_DIR } from '../../common/env.js';
 
 // Catalog (§Phase2): central tenant-level catalog (name/barcode/category/unit),
 // price & cost per branch (ProductBranch), qty DERIVED from BranchStock only.
@@ -134,10 +138,11 @@ export class CatalogService {
 
   async createProduct(tenantId: string, input: {
     name: string; sku?: string; categoryId?: string | null; brandId?: string | null; baseUnitId?: string | null;
-    lowStockDefault?: number;
+    lowStockDefault?: number; imageUrl?: string | null;
     variants?: { name: string; barcode?: string }[];
     branches?: { branchId: string; priceAgora?: number; costAgora?: number; minAlert?: number | null }[];
   }, actorId: string) {
+    this.validateImageUrl(input.imageUrl);
     if (!input.name?.trim()) throw new BadRequestException('اسم الصنف مطلوب');
     const created = await this.prisma.$transaction(async (db: Db) => {
       const product = await db.product.create({
@@ -145,6 +150,7 @@ export class CatalogService {
           tenantId, name: input.name.trim(), sku: input.sku ?? null,
           categoryId: input.categoryId ?? null, brandId: input.brandId ?? null,
           baseUnitId: input.baseUnitId ?? null, lowStockDefault: input.lowStockDefault ?? 0,
+          imageUrl: input.imageUrl ?? null,
         },
       });
       for (const v of input.variants ?? []) {
@@ -171,10 +177,11 @@ export class CatalogService {
 
   async updateProduct(tenantId: string, id: string, patch: {
     name?: string; sku?: string | null; categoryId?: string | null; brandId?: string | null;
-    baseUnitId?: string | null; lowStockDefault?: number;
+    baseUnitId?: string | null; lowStockDefault?: number; imageUrl?: string | null;
   }, actorId: string) {
     const p = await this.prisma.product.findFirst({ where: { id, tenantId, deletedAt: null } });
     if (!p) throw new NotFoundException('الصنف غير موجود');
+    this.validateImageUrl(patch.imageUrl);
     return this.prisma.$transaction(async (db: Db) => {
       const updated = await db.product.update({
         where: { id },
@@ -185,11 +192,58 @@ export class CatalogService {
           ...(patch.brandId !== undefined ? { brandId: patch.brandId } : {}),
           ...(patch.baseUnitId !== undefined ? { baseUnitId: patch.baseUnitId } : {}),
           ...(patch.lowStockDefault !== undefined ? { lowStockDefault: patch.lowStockDefault } : {}),
+          ...(patch.imageUrl !== undefined ? { imageUrl: patch.imageUrl } : {}),
         },
       });
       await auditTx(db, { tenantId, actorId, action: 'update', entity: 'products', entityId: id, diff: patch });
       return updated;
     });
+  }
+
+  private static readonly IMAGE_MIME_EXT: Record<string, string> = {
+    'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif',
+  };
+
+  private static readonly IMAGE_URL_RE = /^\/api\/uploads\/products\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|webp|gif)$/;
+
+  private validateImageUrl(imageUrl: string | null | undefined): void {
+    if (imageUrl === undefined || imageUrl === null) return;
+    if (imageUrl !== null && imageUrl !== '' && !CatalogService.IMAGE_URL_RE.test(imageUrl)) {
+      throw new BadRequestException('رابط صورة الصنف غير صالح');
+    }
+  }
+
+  /** رفع صورة الصنف (data URL): تُحفظ على القرص وتُخدم عبر /api/uploads/products */
+  async setProductImage(tenantId: string, id: string, dataUrl: string, actorId: string) {
+    const p = await this.prisma.product.findFirst({ where: { id, tenantId, deletedAt: null } });
+    if (!p) throw new NotFoundException('الصنف غير موجود');
+    const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\s]+)$/.exec(dataUrl ?? '');
+    if (!match) throw new BadRequestException('صيغة الصنف غير مدعومة (PNG/JPG/WEBP/GIF)');
+    const buffer = Buffer.from(match[2], 'base64');
+    if (buffer.length === 0) throw new BadRequestException('الصورة فارغة');
+    if (buffer.length > PRODUCT_IMAGE_MAX_BYTES) throw new BadRequestException('حجم الصورة كبير جداً (الحد 5MB)');
+    const ext = CatalogService.IMAGE_MIME_EXT[match[1]];
+    const dir = path.join(UPLOAD_DIR, 'products');
+    await fs.promises.mkdir(dir, { recursive: true });
+    const fileName = `${randomUUID()}.${ext}`;
+    const filePath = path.join(dir, fileName);
+    await fs.promises.writeFile(filePath, buffer);
+    const imageUrl = `/api/uploads/products/${fileName}`;
+    try {
+      await this.prisma.$transaction(async (db: Db) => {
+        await db.product.update({ where: { id }, data: { imageUrl } });
+        await auditTx(db, { tenantId, actorId, action: 'update', entity: 'products', entityId: id, diff: { imageUrl } });
+      });
+    } catch (e) {
+      await fs.promises.unlink(filePath).catch(() => undefined);
+      throw e;
+    }
+    // حذف الصورة القديمة بعد نجاح المعاملة فقط
+    if (p.imageUrl?.startsWith('/api/uploads/products/')) {
+      const oldPath = path.join(dir, path.basename(p.imageUrl));
+      void fs.promises.unlink(oldPath).catch(() => undefined);
+    }
+    return { imageUrl };
   }
 
   /** Simple → variants (§3): create variants, parent becomes a non-sellable container. Old sales stay linked to parent. */

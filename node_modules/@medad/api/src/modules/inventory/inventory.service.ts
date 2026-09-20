@@ -79,7 +79,7 @@ export class InventoryService {
       const totalQty = rows.reduce((s, r) => s + r.qty, 0);
       const threshold = bd?.minAlert ?? p.lowStockDefault ?? lowDefault;
       return {
-        id: p.id, name: p.name, sku: p.sku, isContainer: p.isContainer,
+        id: p.id, name: p.name, sku: p.sku, isContainer: p.isContainer, imageUrl: p.imageUrl,
         category: p.category?.name ?? null, brand: p.brand?.name ?? null,
         variants: p.variants,
         priceAgora: bd ? decToAgora(bd.price) : null,

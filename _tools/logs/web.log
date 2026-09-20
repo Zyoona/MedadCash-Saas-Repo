@@ -638,3 +638,56 @@ AggregateError [ECONNREFUSED]:
  n p m   e r r o r   c o m m a n d   f a i l e d  
  n p m   e r r o r   c o m m a n d   C : \ W I N D O W S \ s y s t e m 3 2 \ c m d . e x e   / d   / s   / c   v i t e   - - p o r t   5 1 7 3   - - s t r i c t P o r t   - - h o s t   1 2 7 . 0 . 0 . 1  
  
+> medad-cash@0.1.0 dev:web
+> npm run dev -w apps/web
+
+
+> @medad/web@0.1.0 dev
+> vite --port 5173 --strictPort --host 127.0.0.1
+
+Re-optimizing dependencies because lockfile has changed
+
+  [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m1371[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5173[22m/[39m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
+
+> medad-cash@0.1.0 dev:web
+> npm run dev -w apps/web
+
+
+> @medad/web@0.1.0 dev
+> vite --port 5173 --strictPort --host 127.0.0.1
+
+
+  [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m879[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5173[22m/[39m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
+
+> medad-cash@0.1.0 dev:web
+> npm run dev -w apps/web
+
+
+> @medad/web@0.1.0 dev
+> vite --port 5173 --strictPort --host 127.0.0.1
+
+
+  [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m884[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5173[22m/[39m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
+[2m3:28:09 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/ui.tsx[22m
+[2m3:28:09 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/ui.tsx[22m
+[2m3:28:10 PM[22m [36m[1m[vite][22m[39m [33mhmr invalidate [39m[2m/src/ui.tsx[22m Could not Fast Refresh ("useLiveClock" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+[2m3:28:10 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/Shell.tsx, /src/pages/Transfers.tsx, /src/pages/Settings.tsx, /src/pages/Labels.tsx, /src/pages/Purchases.tsx, /src/pages/Tasks.tsx, /src/pages/Counts.tsx, /src/pages/Sync.tsx, /src/pages/Inventory.tsx, /src/pages/Parties.tsx, /src/pages/Dashboard.tsx, /src/pages/Ledger.tsx, /src/pages/Pos.tsx[22m
+[2m3:28:19 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/ui.tsx[22m
+[2m3:28:20 PM[22m [36m[1m[vite][22m[39m [33mhmr invalidate [39m[2m/src/ui.tsx[22m Could not Fast Refresh (new export)
+[2m3:28:20 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/Shell.tsx, /src/pages/Transfers.tsx, /src/pages/Settings.tsx, /src/pages/Labels.tsx, /src/pages/Purchases.tsx, /src/pages/Tasks.tsx, /src/pages/Counts.tsx, /src/pages/Sync.tsx, /src/pages/Inventory.tsx, /src/pages/Parties.tsx, /src/pages/Dashboard.tsx, /src/pages/Ledger.tsx, /src/pages/Pos.tsx[22m
+[2m3:28:25 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/ui.tsx[22m
+[2m3:28:26 PM[22m [36m[1m[vite][22m[39m [33mhmr invalidate [39m[2m/src/ui.tsx[22m Could not Fast Refresh (new export)
+[2m3:28:26 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/Shell.tsx, /src/pages/Transfers.tsx, /src/pages/Settings.tsx, /src/pages/Labels.tsx, /src/pages/Purchases.tsx, /src/pages/Tasks.tsx, /src/pages/Counts.tsx, /src/pages/Sync.tsx, /src/pages/Inventory.tsx, /src/pages/Parties.tsx, /src/pages/Dashboard.tsx, /src/pages/Ledger.tsx, /src/pages/Pos.tsx[22m
+[2m3:28:35 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Inventory.tsx[22m
+[2m3:28:42 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Inventory.tsx[22m
+[2m3:28:50 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Pos.tsx[22m
+[2m3:28:54 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/Inventory.tsx[22m

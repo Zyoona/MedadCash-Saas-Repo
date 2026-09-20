@@ -7,6 +7,7 @@ import { Shell } from './Shell.js';
 import { BrandLoader, PageLoader, TopLoader } from './Loader.js';
 import { Dashboard } from './pages/Dashboard.js';
 import { Pos } from './pages/Pos.js';
+import { Sales } from './pages/Sales.js';
 import { Inventory } from './pages/Inventory.js';
 import { Purchases } from './pages/Purchases.js';
 import { Parties } from './pages/Parties.js';
@@ -33,6 +34,7 @@ const router = createHashRouter([
     children: [
       { index: true, element: <Dashboard /> },
       { path: 'pos', element: <Pos /> },
+      { path: 'sales', element: <Sales /> },
       { path: 'inventory', element: <Inventory /> },
       { path: 'purchases', element: <Purchases /> },
       { path: 'parties', element: <Parties /> },

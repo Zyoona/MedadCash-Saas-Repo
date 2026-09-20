@@ -496,8 +496,17 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18);
 }
-.result-row { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; text-align: start; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+.result-row { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; text-align: start; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .result-row:hover { border-color: var(--accent); }
+.result-main { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+
+/* صور الأصناف — تظهر في الكاشير والمخزون والجرد؛ الافتراضي /product.png */
+.prod-img { flex: none; width: 36px; height: 36px; object-fit: cover; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.cell-with-img { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.img-editor { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0; }
+.img-editor .prod-img { width: 64px; height: 64px; }
+.img-editor .field { flex: 1; min-width: 180px; }
+.img-editor .field input { width: 100%; }
 .pos-scroll { flex: 1; min-height: 0; overflow: auto; margin-top: 8px; }
 .pos-scroll table.grid { margin-top: 0; }
 .pos-scroll thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
@@ -519,6 +528,48 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
 .pos-pay-actions .btn { flex: 1; height: 36px; padding: 6px 10px; }
 .pos-pay .btn.wide { margin-top: auto; height: 42px; }
 .pos-alt { flex: 1; min-height: 0; overflow: auto; }
+
+/* خانتا مبلغ: شيكل + أغورات — بدل إدخال الأغورات الخام (17.50 ₪ بدل 1750) */
+.split-agora { display: inline-flex; align-items: center; gap: 3px; direction: ltr; white-space: nowrap; }
+.split-agora input { width: 66px; height: 36px; padding: 4px 4px; text-align: center; font-variant-numeric: tabular-nums; min-width: 0; }
+.split-agora .split-cents { width: 48px; }
+.split-agora .split-dot { color: var(--muted); font-weight: 700; }
+.split-agora .split-cur { color: var(--muted); font-size: 12px; flex: none; }
+.pos-scroll .split-agora input { height: 34px; width: 60px; }
+.pos-scroll .split-agora .split-cents { width: 44px; }
+.pay-row .split-agora { flex: 1; min-width: 0; }
+.pay-row .split-agora input { flex: 1; width: auto; height: 36px; }
+.pos-discounts .split-agora { width: 100%; }
+.pos-discounts .split-agora input { flex: 1; width: auto; }
+.shift-banner .split-agora input { width: 52px; height: 32px; padding: 4px 2px; }
+.shift-banner .split-agora .split-cents { width: 40px; }
+.shift-amount { display: inline-flex; align-items: center; gap: 6px; }
+.shift-caption { color: var(--muted); }
+
+/* فواتير بيع مفتوحة متعددة — فاتورة لكل زبون في نفس الوقت */
+.pos-sessions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: none; }
+.pos-session {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+  padding: 5px 10px; cursor: pointer; user-select: none;
+  font-size: 13px; max-width: 300px;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.pos-session:hover { border-color: var(--control-border); }
+.pos-session.active { border-color: var(--accent); background: rgba(34, 197, 94, 0.12); }
+.pos-session-title { flex: none; font-weight: 600; }
+.pos-session.active .pos-session-title { color: var(--accent); font-weight: 700; }
+.pos-session-cust { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pos-session-total { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pos-session.active .pos-session-total { color: var(--accent); font-weight: 700; }
+.pos-session-close {
+  flex: none; width: 20px; height: 20px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 50%;
+  color: var(--muted); font-size: 11px; cursor: pointer;
+}
+.pos-session-close:hover { background: var(--danger); color: #ffffff; }
+.pos-session-add { height: 32px; padding: 0 14px; border-radius: 999px; font-weight: 700; }
 
 /* حاسبة — زر في الشريط العلوي مع لوحة قابلة للسحب بمظهر آلة حقيقية */
 .calc { position: relative; display: inline-flex; }

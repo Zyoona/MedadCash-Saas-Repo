@@ -8,6 +8,7 @@ import { getTheme, toggleTheme, type Theme } from './theme.js';
 const NAV: { to: string; label: string; perm: string }[] = [
   { to: '/', label: 'الرئيسية', perm: 'dashboard.view' },
   { to: '/pos', label: 'الكاشير (POS)', perm: 'pos.view' },
+  { to: '/sales', label: 'المبيعات', perm: 'pos.view' },
   { to: '/inventory', label: 'المخزون', perm: 'inventory.view' },
   { to: '/purchases', label: 'المشتريات', perm: 'purchases.view' },
   { to: '/parties', label: 'العملاء والموردون', perm: 'parties.view' },

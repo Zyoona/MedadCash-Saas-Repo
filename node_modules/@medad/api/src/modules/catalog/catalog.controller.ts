@@ -66,6 +66,12 @@ export class CatalogController {
     return this.catalog.updateProduct(u.tenantId, id, b, u.userId);
   }
 
+  @Post('products/:id/image')
+  @RequirePerm('catalog.manage')
+  uploadImage(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: { dataUrl: string }) {
+    return this.catalog.setProductImage(u.tenantId, id, b?.dataUrl ?? '', u.userId);
+  }
+
   @Post('products/:id/convert')
   @RequirePerm('catalog.manage')
   convert(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: { variants: { name: string; barcode?: string }[] }) {

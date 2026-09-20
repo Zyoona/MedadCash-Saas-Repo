@@ -1,26 +1,27 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, auditEvent, money } from '../api.js';
 import { computeInvoice } from '@medad/shared-types';
-import { Badge, Field, Money, Tabs, useToast } from '../ui.js';
+import { Badge, Field, Money, ProductImage, SplitAgora, Tabs, useToast } from '../ui.js';
 import { useAuth } from '../auth.js';
-import { bankLabel, useBanks, usePaySources } from '../banks.js';
+import { bankLabel, methodAr, PAY_METHODS, useBanks, usePaySources } from '../banks.js';
 
-// POS (§Phase4): بحث اسم/SKU/باركود + خصم سطر وفاتورة + ضريبة أخيراً + دفع متعدد
+// POS (§Phase4): بحث اسم/SKU/باركود + خصم المنتج وفاتورة + ضريبة أخيراً + دفع متعدد
 // + إرجاع الباقي بطريقة مختلفة (سالب) + مرتجعات + عروض أسعار — بنفس ترتيب الحساب الملزم.
+// فواتير متوازية: يمكن فتح أكثر من فاتورة بيع لعدة زبائن في نفس الوقت والتنقل بينها.
 
-const METHODS = [
-  { method: 'cash', accountCode: '1000', label: 'نقد' },
-  { method: 'bank', accountCode: '1100', label: 'بنك' },
-  { method: 'check', accountCode: '1200', label: 'شيك' },
-];
+const METHODS = PAY_METHODS.filter((m) => m.method !== 'credit');
+const MAX_OPEN_INVOICES = 8;
 
 interface SearchRes {
-  products: { id: string; name: string; sku: string | null; variants: { id: string; name: string; barcode: string }[]; branchData: { price: string }[] }[];
-  unitMatch: { id: string; barcode: string | null; product: { id: string; name: string; branchData: { price: string }[] } }[];
+  products: { id: string; name: string; sku: string | null; imageUrl: string | null; variants: { id: string; name: string; barcode: string }[]; branchData: { price: string }[] }[];
+  unitMatch: { id: string; barcode: string | null; product: { id: string; name: string; imageUrl: string | null; branchData: { price: string }[] } }[];
 }
-interface CartLine { productId: string; variantId: string | null; name: string; qty: number; priceAgora: number; lineDiscountAgora: number }
+interface CartLine { productId: string; variantId: string | null; name: string; imageUrl: string | null; qty: number; priceAgora: number; lineDiscountAgora: number }
+interface Payment { method: string; accountCode: string; amountAgora: number }
 interface Customer { id: string; name: string; isCashDefault: boolean }
 interface Shift { id: string; openedAt: string }
+/** فاتورة بيع مفتوحة — لكل زبون سلته وخصوماته ودفعاته المستقلة */
+interface SaleSession { id: string; no: number; customerId: string; cart: CartLine[]; invoiceDiscount: number; discountPct: number; payments: Payment[] }
 
 export function Pos() {
   const { user } = useAuth();
@@ -29,16 +30,28 @@ export function Pos() {
   const [branchId, setBranchId] = useState('');
   const [shift, setShift] = useState<Shift | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [customerId, setCustomerId] = useState('');
+  const sessionSeq = useRef(1);
+
+  const newSession = (): SaleSession => {
+    const no = sessionSeq.current++;
+    const cash = customers.find((c) => c.isCashDefault);
+    return { id: `pos-${no}`, no, customerId: cash?.id ?? '', cart: [], invoiceDiscount: 0, discountPct: 0, payments: [] };
+  };
+
+  const [sessions, setSessions] = useState<SaleSession[]>(() => [newSession()]);
+  const [activeId, setActiveId] = useState<string>(() => sessions[0].id);
   const [q, setQ] = useState('');
   const [results, setResults] = useState<SearchRes | null>(null);
-  const [cart, setCart] = useState<CartLine[]>([]);
-  const [invoiceDiscount, setInvoiceDiscount] = useState(0);
-  const [discountPct, setDiscountPct] = useState(0);
   const [taxBps, setTaxBps] = useState(0);
-  const [payments, setPayments] = useState<{ method: string; accountCode: string; amountAgora: number }[]>([]);
   const { banks } = useBanks(true);
   const defaultBankCode = banks[0]?.glAccountCode ?? '1100';
+
+  const active = sessions.find((s) => s.id === activeId) ?? sessions[0];
+
+  // بعد إغلاق أي فاتورة: تثبيت الفاتورة النشطة على أول فاتورة متاحة
+  useEffect(() => {
+    if (sessions.length && !sessions.some((s) => s.id === activeId)) setActiveId(sessions[0].id);
+  }, [sessions, activeId]);
 
   useEffect(() => {
     api<any>('/org/branches').then((bs) => {
@@ -48,7 +61,7 @@ export function Pos() {
     api<Customer[]>('/parties/customers').then((cs) => {
       setCustomers(cs);
       const cash = cs.find((c) => c.isCashDefault);
-      if (cash) setCustomerId(cash.id);
+      if (cash) setSessions((ss) => ss.map((s) => (s.customerId ? s : { ...s, customerId: cash.id })));
     });
     api<Record<string, unknown>>('/settings').then((s) => {
       const rate = (s as { tax_rate?: { rateBps?: number } }).tax_rate;
@@ -61,6 +74,26 @@ export function Pos() {
     api<Shift | null>('/sales/shifts/current').then(setShift).catch(() => setShift(null));
   }, [branchId]);
 
+  const patchActive = (fn: (s: SaleSession) => SaleSession) => {
+    setSessions((ss) => ss.map((s) => (s.id === activeId ? fn(s) : s)));
+  };
+  const patchLine = (index: number, patch: Partial<CartLine>) => {
+    patchActive((s) => ({
+      ...s,
+      cart: s.cart.map((x, j) => {
+        if (j !== index) return x;
+        const next = { ...x, ...patch };
+        // إعادة تقييد الخصم عند تغير الكمية/السعر حتى لا يتجاوز إجمالي السطر (وإلا فشل حساب الفاتورة)
+        const gross = next.qty * next.priceAgora;
+        if (gross >= 0 && next.lineDiscountAgora > gross) next.lineDiscountAgora = gross;
+        return next;
+      }),
+    }));
+  };
+  const patchPayments = (fn: (ps: Payment[]) => Payment[]) => {
+    patchActive((s) => ({ ...s, payments: fn(s.payments) }));
+  };
+
   const search = async (term: string) => {
     setQ(term);
     if (term.trim().length < 1) { setResults(null); return; }
@@ -70,39 +103,73 @@ export function Pos() {
     // باركود مباشر → أضف للسلة فوراً
     const exact = r.products.find((p) => p.variants.some((v) => v.barcode === term.trim()));
     if (exact) {
-      addToCart(exact.id, exact.variants[0].id, exact.name, Math.round(Number(exact.branchData[0]?.price ?? 0) * 100));
+      addToCart(exact.id, exact.variants[0].id, exact.name, exact.imageUrl, Math.round(Number(exact.branchData[0]?.price ?? 0) * 100));
       setResults(null);
       setQ('');
     }
   };
 
-  const addToCart = (productId: string, variantId: string | null, name: string, priceAgora: number) => {
-    setCart((c) => {
-      const existing = c.find((l) => l.productId === productId && l.variantId === variantId && l.priceAgora === priceAgora);
-      if (existing) return c.map((l) => (l === existing ? { ...l, qty: l.qty + 1 } : l));
-      return [...c, { productId, variantId, name, qty: 1, priceAgora, lineDiscountAgora: 0 }];
+  const addToCart = (productId: string, variantId: string | null, name: string, imageUrl: string | null, priceAgora: number) => {
+    patchActive((s) => {
+      const existing = s.cart.find((l) => l.productId === productId && l.variantId === variantId && l.priceAgora === priceAgora);
+      if (existing) return { ...s, cart: s.cart.map((l) => (l === existing ? { ...l, qty: l.qty + 1 } : l)) };
+      return { ...s, cart: [...s.cart, { productId, variantId, name, imageUrl, qty: 1, priceAgora, lineDiscountAgora: 0 }] };
     });
   };
 
-  const totals = useMemo(() => {
-    const disc = discountPct > 0 ? Math.round((cart.reduce((s, l) => s + (l.qty * l.priceAgora - l.lineDiscountAgora), 0) * discountPct) / 100) : invoiceDiscount;
-    return computeInvoice(
-      cart.map((l) => ({ qty: l.qty, unitPriceAgora: l.priceAgora, lineDiscountAgora: l.lineDiscountAgora, taxRateBps: taxBps })),
-      disc,
-    );
-  }, [cart, invoiceDiscount, discountPct, taxBps]);
+  const computeTotals = (s: SaleSession) => {
+    const disc = s.discountPct > 0 ? Math.round((s.cart.reduce((sum, l) => sum + (l.qty * l.priceAgora - l.lineDiscountAgora), 0) * s.discountPct) / 100) : s.invoiceDiscount;
+    try {
+      return computeInvoice(
+        s.cart.map((l) => ({ qty: l.qty, unitPriceAgora: l.priceAgora, lineDiscountAgora: l.lineDiscountAgora, taxRateBps: taxBps })),
+        Math.max(0, disc),
+      );
+    } catch {
+      // مدخلات غير مكتملة أثناء الكتابة — لا نُسقط الصفحة
+      return null;
+    }
+  };
 
-  const paidNet = payments.reduce((s, p) => s + p.amountAgora, 0);
-  const remainder = totals.grandTotalAgora - paidNet;
+  const totals = useMemo(() => (active ? computeTotals(active) : null), [active, taxBps]);
+  const paidNet = (active?.payments ?? []).reduce((s, p) => s + p.amountAgora, 0);
+  const remainder = (totals?.grandTotalAgora ?? 0) - paidNet;
+
+  const openNewSession = () => {
+    if (sessions.length >= MAX_OPEN_INVOICES) {
+      showToast(`الحد الأقصى ${MAX_OPEN_INVOICES} فواتير مفتوحة في نفس الوقت`, 'bad');
+      return;
+    }
+    const s = newSession();
+    setSessions((ss) => [...ss, s]);
+    setActiveId(s.id);
+  };
+
+  const closeSession = (id: string) => {
+    const target = sessions.find((x) => x.id === id);
+    if (!target) return;
+    if (target.cart.length > 0 && !window.confirm(`إغلاق فاتورة رقم ${target.no} سيُلغي أصنافها (${target.cart.length}) — متابعة؟`)) return;
+    const fallback = newSession();
+    setSessions((ss) => {
+      const rest = ss.filter((x) => x.id !== id);
+      return rest.length ? rest : [fallback];
+    });
+    if (target.cart.length > 0) showToast(`أُغلقت فاتورة رقم ${target.no} بدون حفظ`);
+  };
 
   const checkout = async () => {
+    if (!active || !totals) return;
     try {
       const res = await api<{ invoiceId: string; warnings: string[] }>('/sales/invoices', {
         method: 'POST',
-        body: { branchId, customerId: customerId || null, shiftId: shift?.id ?? null, invoiceDiscountAgora: totals.invoiceDiscountAgora, lines: cart, payments },
+        body: { branchId, customerId: active.customerId || null, shiftId: shift?.id ?? null, invoiceDiscountAgora: totals.invoiceDiscountAgora, lines: active.cart, payments: active.payments },
       });
       showToast(`تمت الفاتورة: ${res.invoiceId.slice(0, 8)}${res.warnings.length ? ' — ' + res.warnings.join('، ') : ''}`, res.warnings.length ? 'bad' : 'ok');
-      setCart([]); setPayments([]); setInvoiceDiscount(0); setDiscountPct(0);
+      // تحديث وظيفي: تعديلات الفواتير الأخرى أثناء انتظار الشبكة لا تُفقد
+      const fallback = newSession();
+      setSessions((ss) => {
+        const rest = ss.filter((x) => x.id !== active.id);
+        return rest.length ? rest : [fallback];
+      });
     } catch (e) {
       showToast((e as Error).message, 'bad');
     }
@@ -132,95 +199,131 @@ export function Pos() {
         <Tabs active={tab} onChange={setTab} tabs={[{ id: 'sell', label: 'بيع' }, { id: 'return', label: 'مرتجع' }, { id: 'quotes', label: 'عروض الأسعار' }]} />
         <ShiftBanner shift={shift} onOpen={openShift} onClose={closeShift} />
       </div>
-      {tab === 'sell' && (
-        <div className="pos-grid">
-          <div className="card pos-catalog">
-            <div className="pos-catalog-head">
-              <h3>الأصناف</h3>
-              <div className="pos-search">
-                <input placeholder="بحث اسم / SKU / باركود..." value={q} onChange={(e) => void search(e.target.value)} />
-                {results && (
-                  <div className="search-results">
-                    {results.products.map((p) => {
-                      const price = Math.round(Number(p.branchData[0]?.price ?? 0) * 100);
-                      return p.variants.length > 0 ? p.variants.map((v) => (
-                        <button key={v.id} className="result-row" onClick={() => { addToCart(p.id, v.id, `${p.name} (${v.name})`, price); setResults(null); setQ(''); }}>
-                          {p.name} — {v.name} <small>{v.barcode}</small> <strong>{money(price)}</strong>
-                        </button>
-                      )) : (
-                        <button key={p.id} className="result-row" disabled={p.branchData.length === 0} onClick={() => { addToCart(p.id, null, p.name, price); setResults(null); setQ(''); }}>
-                          {p.name} <strong>{money(price)}</strong>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+      {tab === 'sell' && active && (
+        <>
+          {/* فواتير مفتوحة متزامنة — فاتورة لكل زبون */}
+          <div className="pos-sessions">
+            {sessions.map((s) => {
+              const t = computeTotals(s);
+              const cust = customers.find((c) => c.id === s.customerId);
+              return (
+                <div
+                  key={s.id}
+                  className={`pos-session${s.id === activeId ? ' active' : ''}`}
+                  role="button" tabIndex={0}
+                  title="التنقل بين الفواتير المفتوحة"
+                  onClick={() => setActiveId(s.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setActiveId(s.id); }}
+                >
+                  <span className="pos-session-title">فاتورة {s.no}</span>
+                  {cust && <span className="pos-session-cust">{cust.name}</span>}
+                  <span className="pos-session-total">{t ? money(t.grandTotalAgora) : '—'}</span>
+                  <button
+                    className="pos-session-close" title="إغلاق هذه الفاتورة" aria-label={`إغلاق فاتورة ${s.no}`}
+                    onClick={(e) => { e.stopPropagation(); closeSession(s.id); }}
+                  >✕</button>
+                </div>
+              );
+            })}
+            <button className="btn secondary pos-session-add" onClick={openNewSession} title="فتح فاتورة بيع جديدة لزبون آخر">+ زبون جديد</button>
+          </div>
+          <div className="pos-grid">
+            <div className="card pos-catalog">
+              <div className="pos-catalog-head">
+                <h3>الأصناف</h3>
+                <div className="pos-search">
+                  <input placeholder="بحث اسم / SKU / باركود..." value={q} onChange={(e) => void search(e.target.value)} />
+                  {results && (
+                    <div className="search-results">
+                      {results.products.map((p) => {
+                        const price = Math.round(Number(p.branchData[0]?.price ?? 0) * 100);
+                        return p.variants.length > 0 ? p.variants.map((v) => (
+                          <button key={v.id} className="result-row" onClick={() => { addToCart(p.id, v.id, `${p.name} (${v.name})`, p.imageUrl, price); setResults(null); setQ(''); }}>
+                            <span className="result-main"><ProductImage src={p.imageUrl} alt={p.name} size={32} />{p.name} — {v.name} <small>{v.barcode}</small></span>
+                            <strong>{money(price)}</strong>
+                          </button>
+                        )) : (
+                          <button key={p.id} className="result-row" disabled={p.branchData.length === 0} onClick={() => { addToCart(p.id, null, p.name, p.imageUrl, price); setResults(null); setQ(''); }}>
+                            <span className="result-main"><ProductImage src={p.imageUrl} alt={p.name} size={32} />{p.name}</span>
+                            <strong>{money(price)}</strong>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="pos-scroll">
+                <table className="grid">
+                  <thead><tr><th>الصنف</th><th>كمية</th><th>سعر (شيكل . أغورات)</th><th>خصم المنتج</th><th>إجمالي</th><th></th></tr></thead>
+                  <tbody>
+                    {active.cart.map((l, i) => (
+                      <tr key={i}>
+                        <td><span className="cell-with-img"><ProductImage src={l.imageUrl} alt={l.name} />{l.name}</span></td>
+                        <td><input type="number" min={1} value={l.qty} onChange={(e) => patchLine(i, { qty: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} style={{ width: 64 }} /></td>
+                        <td><SplitAgora agora={l.priceAgora} label="السعر" onAgora={(v) => patchLine(i, { priceAgora: v })} /></td>
+                        <td><SplitAgora agora={l.lineDiscountAgora} label="خصم المنتج" onAgora={(v) => patchLine(i, { lineDiscountAgora: Math.min(v, l.qty * l.priceAgora) })} /></td>
+                        <td>{money(l.qty * l.priceAgora - l.lineDiscountAgora)}</td>
+                        <td><button className="btn secondary small" onClick={() => patchActive((s) => ({ ...s, cart: s.cart.filter((_, j) => j !== i) }))}>✕</button></td>
+                      </tr>
+                    ))}
+                    {active.cart.length === 0 && <tr><td colSpan={6}>السلة فارغة — ابحث وأضف الأصناف</td></tr>}
+                  </tbody>
+                </table>
               </div>
             </div>
-            <div className="pos-scroll">
-              <table className="grid">
-                <thead><tr><th>الصنف</th><th>كمية</th><th>سعر</th><th>خصم سطر</th><th>إجمالي</th><th></th></tr></thead>
-                <tbody>
-                  {cart.map((l, i) => (
-                    <tr key={i}>
-                      <td>{l.name}</td>
-                      <td><input type="number" min={1} value={l.qty} onChange={(e) => setCart(cart.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x))} style={{ width: 64 }} /></td>
-                      <td><input type="number" min={0} value={l.priceAgora} onChange={(e) => setCart(cart.map((x, j) => j === i ? { ...x, priceAgora: Number(e.target.value) } : x))} style={{ width: 84 }} /></td>
-                      <td><input type="number" min={0} value={l.lineDiscountAgora} onChange={(e) => setCart(cart.map((x, j) => j === i ? { ...x, lineDiscountAgora: Number(e.target.value) } : x))} style={{ width: 84 }} /></td>
-                      <td>{money(l.qty * l.priceAgora - l.lineDiscountAgora)}</td>
-                      <td><button className="btn secondary small" onClick={() => setCart(cart.filter((_, j) => j !== i))}>✕</button></td>
-                    </tr>
-                  ))}
-                  {cart.length === 0 && <tr><td colSpan={6}>السلة فارغة — ابحث وأضف الأصناف</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div className="card pos-pay">
-            <div className="pos-pay-head">
-              <h3>الدفع</h3>
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} aria-label="الزبون">
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}{c.isCashDefault ? ' (نقدي)' : ''}</option>)}
-              </select>
-            </div>
-            <div className="row2 pos-discounts">
-              <Field label="خصم فاتورة (أغورات)"><input type="number" min={0} value={discountPct > 0 ? 0 : invoiceDiscount} onChange={(e) => setInvoiceDiscount(Number(e.target.value))} disabled={discountPct > 0} /></Field>
-              <Field label="خصم %"><input type="number" min={0} max={100} value={discountPct} onChange={(e) => setDiscountPct(Number(e.target.value))} /></Field>
-            </div>
-            <div className="totals">
-              <div><span>بعد الخصومات</span><Money agora={totals.taxableTotalAgora} /></div>
-              <div><span>الضريبة ({taxBps / 100}%)</span><Money agora={totals.taxTotalAgora} /></div>
-              <div className="grand"><span>الإجمالي</span><Money agora={totals.grandTotalAgora} /></div>
-              <div><span>المدفوع</span><Money agora={paidNet} /></div>
-              <div><span>{remainder > 0 ? 'آجل (ذمة)' : 'الباقي'}</span><Money agora={Math.abs(remainder)} /></div>
-            </div>
-            <div className="pos-pays">
-              {payments.map((p, i) => (
-                <div className="pay-row" key={i}>
-                  <select value={p.method} onChange={(e) => {
-                    const m = METHODS.find((m) => m.method === e.target.value)!;
-                    const code = m.method === 'bank' ? defaultBankCode : m.accountCode;
-                    setPayments(payments.map((x, j) => j === i ? { ...x, method: m.method, accountCode: code } : x));
-                  }}>
-                    {METHODS.map((m) => <option key={m.method} value={m.method}>{m.label}</option>)}
-                  </select>
-                  {p.method === 'bank' && (
-                    <select value={p.accountCode} onChange={(e) => setPayments(payments.map((x, j) => j === i ? { ...x, accountCode: e.target.value } : x))} aria-label="الحساب البنكي">
-                      {banks.map((b) => <option key={b.glAccountCode} value={b.glAccountCode}>{bankLabel(b)}</option>)}
+            <div className="card pos-pay">
+              <div className="pos-pay-head">
+                <h3>الدفع — فاتورة {active.no}</h3>
+                <select value={active.customerId} onChange={(e) => patchActive((s) => ({ ...s, customerId: e.target.value }))} aria-label="الزبون">
+                  {customers.map((c) => <option key={c.id} value={c.id}>{c.name}{c.isCashDefault ? ' (نقدي)' : ''}</option>)}
+                </select>
+              </div>
+              <div className="row2 pos-discounts">
+                <Field label="خصم فاتورة">
+                  <SplitAgora
+                    agora={active.discountPct > 0 ? 0 : active.invoiceDiscount}
+                    disabled={active.discountPct > 0} label="خصم الفاتورة"
+                    onAgora={(v) => patchActive((s) => ({ ...s, invoiceDiscount: Math.min(v, s.cart.reduce((sum, l) => sum + (l.qty * l.priceAgora - l.lineDiscountAgora), 0)) }))}
+                  />
+                </Field>
+                <Field label="خصم %"><input type="number" min={0} max={100} value={active.discountPct} onChange={(e) => patchActive((s) => ({ ...s, discountPct: Math.min(100, Math.max(0, Number(e.target.value) || 0)) }))} /></Field>
+              </div>
+              <div className="totals">
+                <div><span>بعد الخصومات</span><Money agora={totals?.taxableTotalAgora ?? null} /></div>
+                <div><span>الضريبة ({taxBps / 100}%)</span><Money agora={totals?.taxTotalAgora ?? null} /></div>
+                <div className="grand"><span>الإجمالي</span><Money agora={totals?.grandTotalAgora ?? null} /></div>
+                <div><span>المدفوع</span><Money agora={paidNet} /></div>
+                <div><span>{remainder > 0 ? 'آجل (ذمة)' : 'الباقي'}</span><Money agora={Math.abs(remainder)} /></div>
+              </div>
+              <div className="pos-pays">
+                {active.payments.map((p, i) => (
+                  <div className="pay-row" key={i}>
+                    <select value={p.method} onChange={(e) => {
+                      const m = METHODS.find((m) => m.method === e.target.value)!;
+                      const code = m.method === 'bank' ? defaultBankCode : m.accountCode;
+                      patchPayments((ps) => ps.map((x, j) => j === i ? { ...x, method: m.method, accountCode: code } : x));
+                    }}>
+                      {METHODS.map((m) => <option key={m.method} value={m.method}>{m.label}</option>)}
                     </select>
-                  )}
-                  <input type="number" value={p.amountAgora} onChange={(e) => setPayments(payments.map((x, j) => j === i ? { ...x, amountAgora: Number(e.target.value) } : x))} />
-                  <button className="btn secondary small" onClick={() => setPayments(payments.filter((_, j) => j !== i))}>✕</button>
-                </div>
-              ))}
+                    {p.method === 'bank' && (
+                      <select value={p.accountCode} onChange={(e) => patchPayments((ps) => ps.map((x, j) => j === i ? { ...x, accountCode: e.target.value } : x))} aria-label="الحساب البنكي">
+                        {banks.map((b) => <option key={b.glAccountCode} value={b.glAccountCode}>{bankLabel(b)}</option>)}
+                      </select>
+                    )}
+                    <SplitAgora agora={p.amountAgora} label={`الدفعة ${i + 1}`} allowNegative onAgora={(v) => patchPayments((ps) => ps.map((x, j) => j === i ? { ...x, amountAgora: v } : x))} />
+                    <button className="btn secondary small" onClick={() => patchPayments((ps) => ps.filter((_, j) => j !== i))}>✕</button>
+                  </div>
+                ))}
+              </div>
+              <div className="row2 pos-pay-actions">
+                <button className="btn secondary" onClick={() => patchPayments((ps) => [...ps, { method: 'cash', accountCode: '1000', amountAgora: remainder > 0 ? remainder : 0 }])}>+ دفعة</button>
+                <button className="btn secondary" onClick={() => patchPayments((ps) => [...ps, { method: 'bank', accountCode: defaultBankCode, amountAgora: remainder < 0 ? remainder : 0 }])}>+ إرجاع باقي</button>
+              </div>
+              <button className="btn wide" disabled={!totals || active.cart.length === 0 || remainder < 0} onClick={checkout}>إتمام البيع — فاتورة {active.no}</button>
             </div>
-            <div className="row2 pos-pay-actions">
-              <button className="btn secondary" onClick={() => setPayments([...payments, { method: 'cash', accountCode: '1000', amountAgora: remainder > 0 ? remainder : 0 }])}>+ دفعة</button>
-              <button className="btn secondary" onClick={() => setPayments([...payments, { method: 'bank', accountCode: defaultBankCode, amountAgora: 0 }])}>+ إرجاع باقي</button>
-            </div>
-            <button className="btn wide" disabled={cart.length === 0 || remainder < 0} onClick={checkout}>إتمام البيع</button>
           </div>
-        </div>
+        </>
       )}
       {tab === 'return' && <div className="pos-alt"><ReturnTab onToast={showToast} /></div>}
       {tab === 'quotes' && <div className="pos-alt"><QuotesTab onToast={showToast} canConvert={!!user?.perms.includes('quotations.manage') || !!user?.perms.includes('*')} /></div>}
@@ -235,7 +338,7 @@ function ShiftBanner({ shift, onOpen, onClose }: { shift: Shift | null; onOpen: 
     return (
       <div className="shift-banner open">
         <span className="shift-status">وردية مفتوحة · {new Date(shift.openedAt).toLocaleTimeString('ar')}</span>
-        <input type="number" placeholder="الفعلي (أغورات)" value={actual} onChange={(e) => setActual(Number(e.target.value))} />
+        <span className="shift-amount"><span className="shift-caption">الفعلي</span><SplitAgora agora={actual} onAgora={setActual} label="الفعلي" /></span>
         <button className="btn small" onClick={() => onClose(actual)}>إقفال</button>
       </div>
     );
@@ -243,7 +346,7 @@ function ShiftBanner({ shift, onOpen, onClose }: { shift: Shift | null; onOpen: 
   return (
     <div className="shift-banner">
       <span className="shift-status">لا وردية مفتوحة</span>
-      <input type="number" placeholder="افتتاح (أغورات)" value={opening} onChange={(e) => setOpening(Number(e.target.value))} />
+      <span className="shift-amount"><span className="shift-caption">افتتاح</span><SplitAgora agora={opening} onAgora={setOpening} label="الافتتاح" /></span>
       <button className="btn small" onClick={() => onOpen(opening)}>افتتاح</button>
     </div>
   );
@@ -302,7 +405,12 @@ function ReturnTab({ onToast }: { onToast: (m: string, t?: 'ok' | 'bad') => void
                 const prev = invoice.returned?.find((r: any) => r.variantId === vid)?.qty ?? 0;
                 return (
                   <tr key={l.id}>
-                    <td>{l.variant?.product?.name ?? l.productId}{l.variant ? ` — ${l.variant.name}` : ''}</td>
+                    <td>
+                      <span className="cell-with-img">
+                        <ProductImage src={l.variant?.product?.imageUrl} alt={l.variant?.product?.name ?? 'صنف'} />
+                        {l.variant?.product?.name ?? l.productId}{l.variant ? ` — ${l.variant.name}` : ''}
+                      </span>
+                    </td>
                     <td>{l.qty}</td>
                     <td>{prev}</td>
                     <td><input type="number" min={0} max={l.qty - prev} value={qty[vid] ?? 0} onChange={(e) => setQty({ ...qty, [vid]: Number(e.target.value) })} /></td>
@@ -312,7 +420,7 @@ function ReturnTab({ onToast }: { onToast: (m: string, t?: 'ok' | 'bad') => void
             </tbody>
           </table>
           <div className="row2">
-            <Field label="رسوم إرجاع (أغورات)"><input type="number" min={0} value={fee} onChange={(e) => setFee(Number(e.target.value))} /></Field>
+            <Field label="رسوم إرجاع"><SplitAgora agora={fee} onAgora={setFee} label="رسوم الإرجاع" /></Field>
             <Field label="طريقة الرد">
               <select value={method} onChange={(e) => {
                 const m = e.target.value;
@@ -401,8 +509,7 @@ function QuotesTab({ onToast, canConvert }: { onToast: (m: string, t?: 'ok' | 'b
             }}>
               {sources.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
             </select>
-            <input type="number" placeholder={`دفعة ${i + 1} (أغورات)`} value={p.amountAgora} style={{ width: 140 }}
-              onChange={(e) => setPayments(payments.map((x, j) => j === i ? { ...x, amountAgora: Number(e.target.value) } : x))} />
+            <SplitAgora agora={p.amountAgora} label={`دفعة ${i + 1}`} onAgora={(v) => setPayments(payments.map((x, j) => j === i ? { ...x, amountAgora: v } : x))} />
           </span>
         ))}
         <button className="btn secondary" onClick={() => setPayments([...payments, { method: 'cash', accountCode: '1000', amountAgora: 0 }])}>+ دفعة</button>

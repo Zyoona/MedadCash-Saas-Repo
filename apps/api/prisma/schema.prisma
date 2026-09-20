@@ -130,6 +130,7 @@ model Product {
   baseUnitId  String?
   name        String
   sku         String?
+  imageUrl    String?   // صورة الصنف (اختيارية) — الافتراضي /product.png عند الغياب
   isContainer Boolean   @default(false) // true when converted simple→variants: parent not sellable
   lowStockDefault Int   @default(0)
   createdAt   DateTime  @default(now())

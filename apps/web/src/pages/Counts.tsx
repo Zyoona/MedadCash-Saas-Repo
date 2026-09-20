@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api, money } from '../api.js';
-import { Badge, Field, useToast } from '../ui.js';
+import { Badge, Field, ProductImage, useToast } from '../ui.js';
 
 // الجرد (§Phase5): أولي (مقابل أرصدة افتتاحية 3900) / يومي (مقابل تسويات الجرد 5200).
 
-interface StockRow { id: string; name: string; totalQty: number; costAgora: number | null; variants: { id: string; name: string }[] }
+interface StockRow { id: string; name: string; imageUrl: string | null; totalQty: number; costAgora: number | null; variants: { id: string; name: string }[] }
 
 export function Counts() {
   const [type, setType] = useState<'initial' | 'daily'>('daily');
@@ -45,7 +45,7 @@ export function Counts() {
         <tbody>
           {stock.map((p) => (
             <tr key={p.id}>
-              <td>{p.name}</td>
+              <td><span className="cell-with-img"><ProductImage src={p.imageUrl} alt={p.name} />{p.name}</span></td>
               <td>{p.totalQty}</td>
               <td><input type="number" min={0} value={counted[p.id] ?? ''} onChange={(e) => setCounted({ ...counted, [p.id]: Number(e.target.value) })} style={{ width: 90 }} /></td>
               <td>{counted[p.id] !== undefined ? counted[p.id] - p.totalQty : '—'}</td>

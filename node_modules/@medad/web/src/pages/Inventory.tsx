@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api, money } from '../api.js';
-import { Badge, Field, Modal, useToast } from '../ui.js';
+import { Badge, Field, Modal, ProductImage, readImageFile, useToast } from '../ui.js';
 import { PageLoader } from '../Loader.js';
 
 interface StockRow {
-  id: string; name: string; sku: string | null; isContainer: boolean;
+  id: string; name: string; sku: string | null; isContainer: boolean; imageUrl: string | null;
   category: string | null; brand: string | null;
   priceAgora: number | null; costAgora: number | null; minAlert: number;
   rows: { variantId: string | null; qty: number }[];
@@ -40,7 +40,12 @@ export function Inventory() {
         <tbody>
           {rows.filter((r) => !q || r.name.includes(q) || (r.sku ?? '').includes(q)).map((r) => (
             <tr key={r.id}>
-              <td>{r.name}{r.isContainer ? ' (حاوية)' : ''}</td>
+              <td>
+                <span className="cell-with-img">
+                  <ProductImage src={r.imageUrl} alt={r.name} />
+                  {r.name}{r.isContainer ? ' (حاوية)' : ''}
+                </span>
+              </td>
               <td>{r.category ?? '—'}</td>
               <td className="mono">{r.variants[0]?.barcode ?? r.sku ?? '—'}</td>
               <td>{r.priceAgora === null ? '—' : money(r.priceAgora)}</td>
@@ -64,6 +69,7 @@ function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; 
   const [form, setForm] = useState({ name: '', sku: '', categoryId: '', brandId: '', lowStockDefault: 0, priceAgora: 0, costAgora: 0, variants: '' });
   const [taxonomy, setTaxonomy] = useState<{ categories: any[]; brands: any[]; units: any[]; branches: any[] }>({ categories: [], brands: [], units: [], branches: [] });
   const [baseUnitId, setBaseUnitId] = useState('');
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -72,10 +78,16 @@ function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; 
     ]).then(([c, b, u, br]) => setTaxonomy({ categories: c, brands: b, units: u, branches: br }));
   }, []);
 
+  const pickImage = async (file: File | undefined) => {
+    if (!file) { setImageDataUrl(null); return; }
+    try { setImageDataUrl(await readImageFile(file)); }
+    catch (e) { showToast((e as Error).message, 'bad'); }
+  };
+
   const submit = async () => {
     try {
       const branch = taxonomy.branches[0];
-      await api('/catalog/products', {
+      const created = await api<any>('/catalog/products', {
         method: 'POST',
         body: {
           name: form.name, sku: form.sku || undefined,
@@ -85,6 +97,10 @@ function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; 
           branches: branch ? [{ branchId: branch.id, priceAgora: form.priceAgora, costAgora: form.costAgora }] : [],
         },
       });
+      if (imageDataUrl && created?.id) {
+        try { await api(`/catalog/products/${created.id}/image`, { method: 'POST', body: { dataUrl: imageDataUrl } }); }
+        catch (e) { showToast((e as Error).message, 'bad'); }
+      }
       showToast('أُنشئ الصنف');
       onDone();
     } catch (e) { showToast((e as Error).message, 'bad'); }
@@ -93,6 +109,13 @@ function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; 
   return (
     <Modal title="صنف جديد" onClose={onClose}>
       <Field label="الاسم *"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+      <div className="img-editor">
+        <ProductImage src={imageDataUrl} alt="صورة الصنف" size={64} />
+        <Field label="صورة الصنف (اختياري)">
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(e) => void pickImage(e.target.files?.[0])} />
+        </Field>
+        {imageDataUrl && <button className="btn secondary small" onClick={() => setImageDataUrl(null)}>إزالة الصورة</button>}
+      </div>
       <div className="row2">
         <Field label="SKU"><input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} /></Field>
         <Field label="حد التنبيه"><input type="number" value={form.lowStockDefault} onChange={(e) => setForm({ ...form, lowStockDefault: Number(e.target.value) })} /></Field>
@@ -139,6 +162,7 @@ function ProductModal({ product, onClose, onDone, showToast }: { product: StockR
   const [components, setComponents] = useState<{ label: string; amountAgora: number }[]>([]);
   const [price, setPrice] = useState(product.priceAgora ?? 0);
   const [cost, setCost] = useState(product.costAgora ?? 0);
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
 
   const load = () => api<any>(`/catalog/products/${product.id}`).then((d) => {
     setDetail(d);
@@ -148,6 +172,30 @@ function ProductModal({ product, onClose, onDone, showToast }: { product: StockR
   useEffect(() => { void load(); /* eslint-disable-line */ }, []);
 
   const branchId = async () => (await api<any[]>('/org/branches'))[0]?.id ?? '';
+
+  const pickImage = async (file: File | undefined) => {
+    if (!file) { setImageDataUrl(null); return; }
+    try { setImageDataUrl(await readImageFile(file)); }
+    catch (e) { showToast((e as Error).message, 'bad'); }
+  };
+
+  const saveImage = async () => {
+    if (!imageDataUrl) return;
+    try {
+      await api(`/catalog/products/${product.id}/image`, { method: 'POST', body: { dataUrl: imageDataUrl } });
+      showToast('حُفظت صورة الصنف');
+      setImageDataUrl(null);
+      onDone();
+    } catch (e) { showToast((e as Error).message, 'bad'); }
+  };
+
+  const removeImage = async () => {
+    try {
+      await api(`/catalog/products/${product.id}`, { method: 'PUT', body: { imageUrl: null } });
+      showToast('أُزيلت صورة الصنف — ستظهر الصورة الافتراضية');
+      onDone();
+    } catch (e) { showToast((e as Error).message, 'bad'); }
+  };
 
   const saveBranch = async () => {
     try {
@@ -193,6 +241,15 @@ function ProductModal({ product, onClose, onDone, showToast }: { product: StockR
     <Modal title={`تفاصيل: ${product.name}`} onClose={onClose}>
       {!detail ? <PageLoader /> : (
         <>
+          <h4>صورة الصنف</h4>
+          <div className="img-editor">
+            <ProductImage src={imageDataUrl ?? detail.imageUrl} alt={product.name} size={72} />
+            <Field label="اختيار صورة (اختياري)">
+              <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(e) => void pickImage(e.target.files?.[0])} />
+            </Field>
+            {imageDataUrl && <button className="btn small" onClick={saveImage}>حفظ الصورة</button>}
+            {detail.imageUrl && <button className="btn secondary small" onClick={removeImage}>إزالة الصورة</button>}
+          </div>
           <h4>الباركودات</h4>
           <ul className="mono">
             {detail.variants.map((v: any) => <li key={v.id}>{v.name}: {v.barcode}</li>)}

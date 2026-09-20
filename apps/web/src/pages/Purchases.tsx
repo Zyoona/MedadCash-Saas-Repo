@@ -136,7 +136,7 @@ function NewPurchase({ onClose, onDone, showToast }: { onClose: () => void; onDo
                 <input placeholder="اسم الصنف" value={l.variantName} onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, variantName: e.target.value } : x))} />
                 <input type="number" placeholder="كمية" value={l.qty} style={{ width: 80 }} onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x))} />
                 <input type="number" placeholder="تكلفة الوحدة" value={l.unitCostAgora} style={{ width: 110 }} onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, unitCostAgora: Number(e.target.value) } : x))} />
-                <input type="number" placeholder="خصم سطر" value={l.lineDiscountAgora} style={{ width: 100 }} onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, lineDiscountAgora: Number(e.target.value) } : x))} />
+                <input type="number" placeholder="خصم المنتج" value={l.lineDiscountAgora} style={{ width: 100 }} onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, lineDiscountAgora: Number(e.target.value) } : x))} />
                 <button className="btn secondary small" onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕</button>
               </div>
             ))}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { AGORA_PER_SHEKEL } from '@medad/shared-types';
 import { money } from './api.js';
 
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
@@ -38,8 +39,64 @@ export function Money({ agora, className }: { agora: number | null | undefined; 
   return <span className={className}>{agora === null || agora === undefined ? '—' : money(agora)}</span>;
 }
 
+/** خانتا مبلغ: شيكل + أغورات — تُعرض القيمة كما يقرأها المستخدم (17 . 50 = 17.50 ₪) بدل 1750 أغورة. */
+export function SplitAgora({ agora, onAgora, disabled, label }: { agora: number; onAgora: (agora: number) => void; disabled?: boolean; label?: string }) {
+  const abs = Math.max(0, Math.round(Number.isFinite(agora) ? agora : 0));
+  const shekels = Math.floor(abs / AGORA_PER_SHEKEL);
+  const cents = abs % AGORA_PER_SHEKEL;
+  const emit = (nextShekels: number, nextCents: number) => {
+    onAgora(Math.max(0, nextShekels) * AGORA_PER_SHEKEL + Math.min(AGORA_PER_SHEKEL - 1, Math.max(0, nextCents)));
+  };
+  return (
+    <span className="split-agora">
+      <input
+        type="number" min={0} inputMode="numeric" disabled={disabled} value={shekels}
+        aria-label={label ? `${label} — شيكل` : 'شيكل'}
+        onChange={(e) => emit(Math.floor(Number(e.target.value) || 0), cents)}
+      />
+      <span className="split-dot" aria-hidden="true">.</span>
+      <input
+        type="number" min={0} max={AGORA_PER_SHEKEL - 1} inputMode="numeric" disabled={disabled}
+        value={String(cents).padStart(2, '0')}
+        aria-label={label ? `${label} — أغورات` : 'أغورات'}
+        onChange={(e) => emit(shekels, Math.floor(Number(e.target.value) || 0))}
+      />
+      <span className="split-cur" aria-hidden="true">₪</span>
+    </span>
+  );
+}
+
 export function Badge({ tone, children }: { tone: 'ok' | 'warn' | 'bad'; children: ReactNode }) {
   return <span className={`badge ${tone}`}>{children}</span>;
+}
+
+export const DEFAULT_PRODUCT_IMAGE = '/product.png';
+
+/** صورة الصنف — تظهر الصورة الافتراضية عند غياب الصنف أو فشل تحميل صورته */
+export function ProductImage({ src, alt, size = 36 }: { src?: string | null; alt: string; size?: number }) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => { setBroken(false); }, [src]);
+  return (
+    <img
+      className="prod-img"
+      src={!src || broken ? DEFAULT_PRODUCT_IMAGE : src}
+      alt={alt}
+      width={size}
+      height={size}
+      loading="lazy"
+      onError={() => setBroken(true)}
+    />
+  );
+}
+
+/** قراءة ملف صورة محلي إلى data URL لرفعه إلى الخادم */
+export function readImageFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('تعذر قراءة الصورة'));
+    reader.readAsDataURL(file);
+  });
 }
 
 export function useToast(): [ReactNode, (msg: string, tone?: 'ok' | 'bad') => void] {

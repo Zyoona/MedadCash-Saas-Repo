@@ -262,7 +262,7 @@ export class SalesService {
       include: {
         customer: { select: { id: true, name: true } },
         branch: { select: { id: true, name: true } },
-        lines: { include: { variant: { select: { id: true, name: true, barcode: true, product: { select: { id: true, name: true } } } } } },
+        lines: { include: { variant: { select: { id: true, name: true, barcode: true, product: { select: { id: true, name: true, imageUrl: true } } } } } },
         payments: true,
         shift: { select: { id: true, openedAt: true } },
       },

@@ -24,6 +24,18 @@ export interface PaySource { code: string; label: string }
 
 export const CASH_CODE = '1000';
 
+/** سجل طرق الدفع الموحد — مصدر واحد للتسميات وأكواد GL في كل الشاشات (POS/المرتجعات/المبيعات) */
+export interface PayMethod { method: string; accountCode: string; label: string }
+
+export const PAY_METHODS: PayMethod[] = [
+  { method: 'cash', accountCode: CASH_CODE, label: 'نقد' },
+  { method: 'bank', accountCode: '1100', label: 'بنك' },
+  { method: 'check', accountCode: '1200', label: 'شيك' },
+  { method: 'credit', accountCode: '1300', label: 'حساب العميل (آجل)' },
+];
+
+export const methodAr = (m: string): string => PAY_METHODS.find((x) => x.method === m)?.label ?? m;
+
 export const bankLabel = (b: BankAccount): string =>
   `${b.bankName}${b.accountLabel ? ' — ' + b.accountLabel : ''}`;
 
