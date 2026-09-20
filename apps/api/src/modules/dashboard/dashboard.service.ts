@@ -35,6 +35,13 @@ export class DashboardService {
     const bankCodes = [...new Set(['1100', ...bankAccounts.map((b) => b.glAccountCode)])];
     const bankBalances = await Promise.all(bankCodes.map((c) => this.accountBalance(tenantId, c)));
 
+    // عهدة الأدراج (§Phase4): نقد الكاشيرز المحوَّل من 1000 إلى حسابات دروجهم — يُعرض بجانب الصندوق
+    const drawers = await this.prisma.cashDrawer.findMany({
+      where: { tenantId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    const drawerBalances = await Promise.all(drawers.map((d) => this.accountBalance(tenantId, d.glAccountCode)));
+
     const [todayInvoiceLines, todayCount, cash, ar, ap, alerts, openConflicts, lastBackup, openShift, quotesExpiring, dueChecks, tb] = await Promise.all([
       this.prisma.invoiceLine.findMany({
         where: { invoice: { tenantId, branchId, status: 'posted', createdAt: { gte: startOfDay } } },
@@ -57,6 +64,7 @@ export class DashboardService {
       todaySalesAgora: todayInvoiceLines.reduce((s, l) => s + l.netAgora, 0),
       todayInvoicesCount: todayCount,
       cashAgora: cash,
+      drawerCashAgora: drawerBalances.reduce((s, x) => s + x, 0),
       bankAgora: bankBalances.reduce((s, x) => s + x, 0),
       banks: bankAccounts.map((b) => ({
         id: b.id,

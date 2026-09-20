@@ -19,17 +19,19 @@ interface SearchRes {
 interface CartLine { productId: string; variantId: string | null; name: string; imageUrl: string | null; thumbUrl: string | null; qty: number; priceAgora: number; lineDiscountAgora: number }
 interface Payment { method: string; accountCode: string; amountAgora: number }
 interface Customer { id: string; name: string; isCashDefault: boolean }
-/** وردية الكاشير المفتوحة + مطابقة الصندوق الحية (المتوقع من دفتر الأستاذ لفرع الوردية) */
+/** وردية الكاشير المفتوحة + مطابقة الصندوق الحية (المتوقع من دفتر الأستاذ: درج العهدة أو حركة الفرع) */
 interface ShiftInfo { id: string; openedAt: string; openingAmountAgora: number }
 interface ShiftPanel {
   shift: ShiftInfo | null;
   expectedAgora: number | null;
+  drawerAccountCode: string | null;
+  basis: 'drawer' | 'branch_flow' | null;
   suggestedOpeningAgora: number | null;
   boxBalanceAgora: number;
   otherOpenShifts: number;
   warnings: string[];
 }
-interface ShiftCloseResult { expectedAgora: number; diffAgora: number; entryId: string | null; warnings: string[] }
+interface ShiftCloseResult { expectedAgora: number; diffAgora: number; drawerAccountCode: string | null; entryId: string | null; warnings: string[] }
 /** فاتورة بيع مفتوحة — لكل زبون سلته وخصوماته ودفعاته المستقلة */
 interface SaleSession { id: string; no: number; customerId: string; cart: CartLine[]; invoiceDiscount: number; discountPct: number; payments: Payment[]; paymentsTouched: boolean }
 
@@ -207,8 +209,8 @@ export function Pos() {
   };
 
   // ─── الورديات ───
-  // الافتتاح = عدّ النقد الموجود في صندوق الفرع (بلا قيد محاسبي: النقد مسجل أصلاً في 1000).
-  // الإقفال = عدّ فعلي مقابل المتوقع المشتق من دفتر الأستاذ، والفرق يُرحَّل (عجز/فائض 5310).
+  // الافتتاح: تحويل عهدة نقدية من صندوق الفرع إلى درج الكاشير (Dr درج / Cr 1000).
+  // الإقفال: عدّ فعلي مقابل رصيد الدرج من الدفتر، ويُرحَّل التسليم والفرق (5310) في قيد واحد.
   const openShift = async (openingAgora: number) => {
     try {
       const res = await api<{ warnings: string[] }>('/sales/shifts/open', { method: 'POST', body: { branchId, openingAmountAgora: openingAgora } });
@@ -368,11 +370,11 @@ export function Pos() {
 }
 
 /**
- * شريط الوردية (§Phase4):
- *  - بلا وردية: «صندوق الفرع» = رصيد حساب 1000 للفرع من الدفتر، وحقل افتتاح = **عدّ** النقد
- *    الموجود فعلياً (يُقترح من العدّ الفعلي لإقفال الكاشير السابق). الافتتاح لا يرحّل قيداً.
- *  - وردية مفتوحة: «المتوقع» = الافتتاح + صافي حركة 1000 للفرع خلال نافذة الوردية، وحقل الفعلي
- *    للعدّ عند الإقفال؛ الفرق (عجز/فائض) يُرحَّل قيداً مزدوجاً على 5310 عند الإقفال.
+ * شريط الوردية (§Phase4) — درج عهدة مستقل لكل كاشير (حساب GL أصلي 1010+):
+ *  - بلا وردية: «صندوق الفرع» = رصيد 1000 للفرع من الدفتر، وحقل افتتاح = عدّ النقد المُحوَّل
+ *    إلى الدرج (يُقترح من العدّ الفعلي لإقفال الكاشير السابق). الافتتاح يرحّل Dr درج / Cr 1000.
+ *  - وردية مفتوحة: «المتوقع» = رصيد حساب الدرج من الدفتر، وحقل الفعلي للعدّ عند الإقفال؛
+ *    الإقفال يرحّل Dr 1000 (المُسلَّم) + Dr/Cr 5310 (العجز/الفائض) / Cr درج ⇒ الدرج يعود صفراً.
  */
 function ShiftBanner({ panel, allowSharedBox, onOpen, onClose }: { panel: ShiftPanel | null; allowSharedBox: boolean; onOpen: (n: number) => void; onClose: (n: number) => void }) {
   const shift = panel?.shift ?? null;
@@ -391,12 +393,16 @@ function ShiftBanner({ panel, allowSharedBox, onOpen, onClose }: { panel: ShiftP
   // صندوق الفرع واحد: لا تُفتح وردية ثانية فوق وردية كاشير آخر إلا بصلاحية pos.shift_any
   const blockedBySharedBox = (panel?.otherOpenShifts ?? 0) > 0 && !allowSharedBox;
   const boxCaption = <span className="shift-caption" title="رصيد حساب الصندوق (1000) لفرع POS من دفتر الأستاذ">صندوق الفرع {money(panel?.boxBalanceAgora ?? 0)}</span>;
+  const expectedTitle = panel?.basis === 'drawer'
+    ? 'رصيد حساب درج العهدة من دفتر الأستاذ = العهدة المحوَّلة عند الافتتاح + النقد المرحَّل إلى الدرج'
+    : 'الافتتاح + صافي حركة حساب الصندوق (1000) لفرع الوردية من دفتر الأستاذ';
 
   if (shift) {
     return (
       <div className="shift-banner open">
         <span className="shift-status">وردية مفتوحة · {new Date(shift.openedAt).toLocaleTimeString('ar')}</span>
-        <span className="shift-caption" title="الافتتاح + صافي حركة حساب الصندوق (1000) لفرع الوردية من دفتر الأستاذ">المتوقع {money(expected)}</span>
+        {panel?.drawerAccountCode && <span className="shift-caption" title="حساب GL لدرج عهدة الكاشير">درج {panel.drawerAccountCode}</span>}
+        <span className="shift-caption" title={expectedTitle}>المتوقع {money(expected)}</span>
         {boxCaption}
         <span className="shift-amount"><span className="shift-caption">الفعلي (عدّ)</span><SplitAgora agora={actual} onAgora={setActual} label="الفعلي" /></span>
         {diff !== 0 && <span className={`shift-diff ${diff < 0 ? 'short' : 'over'}`}>{diff < 0 ? 'عجز' : 'فائض'} {money(Math.abs(diff))}</span>}

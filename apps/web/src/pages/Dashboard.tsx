@@ -9,6 +9,7 @@ interface Summary {
   todaySalesAgora: number;
   todayInvoicesCount: number;
   cashAgora: number;
+  drawerCashAgora: number;
   bankAgora: number;
   banks: { id: string; bankName: string; accountLabel: string | null; glAccountCode: string; isActive: boolean; balanceAgora: number }[];
   receivablesAgora: number;
@@ -100,7 +101,11 @@ export function Dashboard() {
         <div className="kpi-row">
           <div className="kpi"><div className="label">مبيعات اليوم</div><div className="value">{money(s.todaySalesAgora)}</div></div>
           <div className="kpi"><div className="label">فواتير اليوم</div><div className="value">{s.todayInvoicesCount}</div></div>
-          <div className="kpi"><div className="label">الصندوق</div><div className="value">{money(s.cashAgora)}</div></div>
+          <div className="kpi">
+            <div className="label">الصندوق (1000)</div>
+            <div className="value">{money(s.cashAgora)}</div>
+            {s.drawerCashAgora !== 0 && <small className="muted">+ عهدة الأدراج {money(s.drawerCashAgora)}</small>}
+          </div>
           <div className="kpi"><div className="label">البنك</div><div className="value">{money(s.bankAgora)}</div></div>
           <div className="kpi"><div className="label">ذمم العملاء</div><div className="value">{money(s.receivablesAgora)}</div></div>
           <div className="kpi"><div className="label">ذمم الموردين</div><div className="value">{money(s.payablesAgora)}</div></div>

@@ -26,6 +26,7 @@
     "test": "npm run test -w apps/api",
     "test:ledger": "npm run test:ledger -w apps/api",
     "prisma:migrate": "npm run prisma:migrate -w apps/api",
+    "prisma:generate": "npm run prisma:generate -w apps/api",
     "prisma:seed": "npm run prisma:seed -w apps/api"
   },
   "engines": {
@@ -36,11 +37,12 @@
     "bcryptjs": "^3.0.3",
     "embedded-postgres": "^18.4.0-beta.17",
     "pg": "^8.23.0",
+    "prisma": "5.22.0",
     "typescript-eslint": "^8.70.0"
   },
   "dependencies": {
     "@esbuild/win32-x64": "^0.21.5",
-    "@prisma/client": "^5.22.0",
+    "@prisma/client": "5.22.0",
     "better-sqlite3": "^11.10.0"
   }
 }

@@ -15,6 +15,7 @@ const COGS = '5000';
 const INVENTORY = '1400';
 const RETURNS_EXPENSE = '4100';
 const LEGACY_BANK = '1100';
+const CASH = '1000';
 
 // POS / Sales (§Phase4) — BINDING invoice order (§1.2):
 //   line discount → pro-rata invoice discount → tax AFTER discounts (default 0%).
@@ -58,11 +59,12 @@ export class SalesService {
    * ربط الفاتورة بالوردية (§Phase4): يجب أن تكون الوردية موجودة، ما زالت مفتوحة،
    * تتبع نفس فرع الفاتورة، وتعود لنفس الكاشير (أو بصلاحية pos.shift_any).
    * بدون هذا التحقق يمكن إسناد فواتير لورديات مغلقة/لغير الكاشير فتفسد مطابقة الصندوق.
+   * يعيد حساب الوجهة النقدية: درج عهدة الوردية إن وُجد، وإلا صندوق الفرع (1000).
    */
-  private async assertShift(db: Db, tenantId: string, actor: { userId: string; perms: string[] }, branchId: string, shiftId: string) {
+  private async assertShift(db: Db, tenantId: string, actor: { userId: string; perms: string[] }, branchId: string, shiftId: string): Promise<{ cashAccountCode: string }> {
     const shift = await db.shift.findFirst({
       where: { id: shiftId, tenantId },
-      select: { id: true, branchId: true, cashierId: true, closedAt: true },
+      select: { id: true, branchId: true, cashierId: true, closedAt: true, drawer: { select: { glAccountCode: true } } },
     });
     if (!shift) throw new BadRequestException('الوردية غير موجودة');
     if (shift.closedAt) throw new BadRequestException('لا يمكن ربط فاتورة بوردية مغلقة — افتح وردية جديدة');
@@ -70,6 +72,20 @@ export class SalesService {
     if (shift.cashierId !== actor.userId && !hasPerm(actor.perms, 'pos.shift_any')) {
       throw new ForbiddenException('الوردية تتبع كاشير آخر');
     }
+    return { cashAccountCode: shift.drawer?.glAccountCode ?? CASH };
+  }
+
+  /**
+   * درج عهدة الكاشير المفتوح في فرع معيّن (إن وُجد) — لتوجيه النقد المُسترد/المقبوض
+   * عبر شاشة POS إلى الدرج نفسه الذي ستُطابَق ورديته.
+   */
+  private async drawerCodeFor(db: Db, tenantId: string, branchId: string, cashierId: string): Promise<string> {
+    const openShift = await db.shift.findFirst({
+      where: { tenantId, branchId, cashierId, closedAt: null },
+      orderBy: { openedAt: 'desc' },
+      select: { drawer: { select: { glAccountCode: true } } },
+    });
+    return openShift?.drawer?.glAccountCode ?? CASH;
   }
 
   async createInvoice(tenantId: string, actor: { userId: string; perms: string[]; device?: string; ip?: string }, input: {
@@ -135,8 +151,10 @@ export class SalesService {
     }
 
     return this.prisma.$transaction(async (db: Db) => {
-      // الوردية: ربط الفاتورة بوردية مفتوحة لنفس الكاشير/الفرع (§Phase4)
-      if (input.shiftId) await this.assertShift(db, tenantId, actor, branchId, input.shiftId);
+      // الوردية: ربط الفاتورة بوردية مفتوحة لنفس الكاشير/الفرع + اعتماد درج العهدة وجهةً للنقد (§Phase4)
+      const cashAccountCode = input.shiftId
+        ? (await this.assertShift(db, tenantId, actor, branchId, input.shiftId)).cashAccountCode
+        : CASH;
       // Customer: default cash customer; credit sales need a real customer + limit check (§3)
       const customer = input.customerId
         ? await db.customer.findFirst({ where: { id: input.customerId, tenantId, deletedAt: null } })
@@ -195,9 +213,11 @@ export class SalesService {
       });
 
       // Ledger 1 — sale (§4 rows 1/3 + change row 8): Dr payment accounts (net) + Dr AR remainder / Cr revenue + Cr tax
+      // النقد يُرحَّل إلى درج عهدة الوردية إن وُجد — صف الدفعة يحتفظ بكود الطريقة (1000)
       const netByAccount = new Map<string, number>();
       for (const p of input.payments) {
-        netByAccount.set(p.accountCode, (netByAccount.get(p.accountCode) ?? 0) + p.amountAgora);
+        const code = p.accountCode === CASH ? cashAccountCode : p.accountCode;
+        netByAccount.set(code, (netByAccount.get(code) ?? 0) + p.amountAgora);
       }
       const saleLines = [
         ...[...netByAccount.entries()].flatMap(([code, amt]) =>
@@ -353,6 +373,10 @@ export class SalesService {
     if (refundGross < 0) throw new BadRequestException('خصم الإرجاع أكبر من قيمة المرتجع');
 
     return this.prisma.$transaction(async (db: Db) => {
+      // النقد المُسترد يخرج من درج عهدة الكاشير إن كانت له وردية مفتوحة في فرع الفاتورة (§Phase4)
+      const refundLedgerCode = input.refundAccountCode === CASH
+        ? await this.drawerCodeFor(db, tenantId, inv.branchId, actor.userId)
+        : input.refundAccountCode;
       // stock back in
       for (const it of items) {
         const productId = it.line.variantId
@@ -378,14 +402,14 @@ export class SalesService {
           ...(taxTotal > 0 ? [{ accountCode: TAX_PAYABLE, debitAgora: taxTotal, creditAgora: 0 }] : []),
           ...(costTotal > 0 ? [{ accountCode: INVENTORY, debitAgora: costTotal, creditAgora: 0 }] : []),
           {
-            accountCode: input.refundAccountCode, debitAgora: 0, creditAgora: refundGross,
+            accountCode: refundLedgerCode, debitAgora: 0, creditAgora: refundGross,
             ...(input.refundMethod === 'credit' ? { customerId: inv.customerId } : {}),
           },
           ...(fee > 0 ? [{ accountCode: RETURNS_EXPENSE, debitAgora: 0, creditAgora: fee }] : []),
           ...(costTotal > 0 ? [{ accountCode: COGS, debitAgora: 0, creditAgora: costTotal }] : []),
         ],
       }, db);
-      await auditTx(db, { tenantId, actorId: actor.userId, branchId: inv.branchId, action: 'create', entity: 'returns', entityId: ret.id, diff: { sourceInvoiceId: inv.id, refundGross, fee, entryId }, ip: actor.ip ?? null, device: actor.device ?? null });
+      await auditTx(db, { tenantId, actorId: actor.userId, branchId: inv.branchId, action: 'create', entity: 'returns', entityId: ret.id, diff: { sourceInvoiceId: inv.id, refundGross, fee, refundAccountCode: refundLedgerCode, entryId }, ip: actor.ip ?? null, device: actor.device ?? null });
       await syncOpTx(db, { tenantId, branchId: inv.branchId, entity: 'sale_return', entityId: ret.id, op: 'create', payload: { sourceInvoiceId: inv.id, refundGross } });
       return { returnId: ret.id, entryId, refundGrossAgora: refundGross, taxableTotalAgora: taxableTotal, taxTotalAgora: taxTotal, costTotalAgora: costTotal, feeAgora: fee };
     });

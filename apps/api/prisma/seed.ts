@@ -321,6 +321,32 @@ async function main() {
   const ranaId = users['rana@medad.local'];
   const omarId = users['omar@medad.local'];
 
+  // ── أدراج العهدة النقدية (§Phase4): حساب GL أصلي مستقل لكل كاشير (1010+) — idempotent ──
+  const DRAWER_BASE = 1010;
+  const drawerOf = new Map<string, { id: string; code: string }>(); // cashierId → درج العهدة
+  for (const cashierId of [ranaId, omarId]) {
+    const existing = await prisma.cashDrawer.findFirst({ where: { tenantId, cashierId, deletedAt: null } });
+    if (existing) {
+      if (!accountsByCode.has(existing.glAccountCode)) {
+        const acc = await prisma.account.findFirst({ where: { tenantId, code: existing.glAccountCode }, select: { id: true } });
+        if (acc) accountsByCode.set(existing.glAccountCode, acc);
+      }
+      drawerOf.set(cashierId, { id: existing.id, code: existing.glAccountCode });
+      continue;
+    }
+    let code = DRAWER_BASE;
+    while (accountsByCode.has(String(code))) code += 1;
+    const cashier = await prisma.user.findUnique({ where: { id: cashierId }, select: { name: true } });
+    const acc = await prisma.account.create({
+      data: { tenantId, code: String(code), name: `عهدة درج — ${cashier?.name ?? 'الكاشير'}`, type: 'asset', createdAt: d(PY, 1, 1, 8) },
+    });
+    accountsByCode.set(acc.code, { id: acc.id });
+    const drawer = await prisma.cashDrawer.create({
+      data: { tenantId, cashierId, name: `درج ${cashier?.name ?? 'الكاشير'}`, glAccountCode: acc.code, createdAt: d(PY, 1, 1, 9) },
+    });
+    drawerOf.set(cashierId, { id: drawer.id, code: drawer.glAccountCode });
+  }
+
   const defaults: [string, unknown][] = [
     ['tax_rate', { rateBps: 0 }],
     ['fiscal_year_start', { month: 1, day: 1 }],
@@ -620,15 +646,30 @@ async function main() {
       { sku: 'GFT-WRAP', qty: 40, cost: 600 },
     ] });
 
-    // ── Shifts (3 مغلقة + 2 مفتوحة اليوم) ──
-    const shifts = {
-      sh1: (await db.shift.create({ data: { tenantId, branchId: main.id, cashierId: ranaId, openingAmount: dec(50000), openedAt: d(CY, 9, 15, 8, 30) } })).id,
-      sh2: (await db.shift.create({ data: { tenantId, branchId: main.id, cashierId: ranaId, openingAmount: dec(30000), openedAt: d(CY, 9, 16, 8, 30) } })).id,
-      sh3: (await db.shift.create({ data: { tenantId, branchId: b2.id, cashierId: omarId, openingAmount: dec(20000), openedAt: d(CY, 9, 16, 9, 0) } })).id,
-      sh4: (await db.shift.create({ data: { tenantId, branchId: main.id, cashierId: ranaId, openingAmount: dec(50000), openedAt: today(8, 30) } })).id,
-      sh5: (await db.shift.create({ data: { tenantId, branchId: b2.id, cashierId: omarId, openingAmount: dec(20000), openedAt: today(9, 0) } })).id,
-    };
-    const shiftCash = new Map<string, number>(); // shiftId → cash payments agora
+    // ── Shifts (3 مغلقة + 2 مفتوحة اليوم) + تحويل عهدة الصندوق إلى درج الكاشير عند كل افتتاح ──
+    const shiftDefs: { key: string; branchId: string; cashierId: string; opening: number; openedAt: Date }[] = [
+      { key: 'sh1', branchId: main.id, cashierId: ranaId, opening: 50000, openedAt: d(CY, 9, 15, 8, 30) },
+      { key: 'sh2', branchId: main.id, cashierId: ranaId, opening: 30000, openedAt: d(CY, 9, 16, 8, 30) },
+      { key: 'sh3', branchId: b2.id, cashierId: omarId, opening: 20000, openedAt: d(CY, 9, 16, 9, 0) },
+      { key: 'sh4', branchId: main.id, cashierId: ranaId, opening: 50000, openedAt: today(8, 30) },
+      { key: 'sh5', branchId: b2.id, cashierId: omarId, opening: 20000, openedAt: today(9, 0) },
+    ];
+    const shifts: Record<string, string> = {};
+    const drawerByShift = new Map<string, string>(); // shiftId → كود حساب درج العهدة
+    for (const sd of shiftDefs) {
+      const drawer = drawerOf.get(sd.cashierId)!;
+      const row = await db.shift.create({
+        data: { tenantId, branchId: sd.branchId, cashierId: sd.cashierId, drawerId: drawer.id, openingAmount: dec(sd.opening), openedAt: sd.openedAt },
+      });
+      shifts[sd.key] = row.id;
+      drawerByShift.set(row.id, drawer.code);
+      // تحويل العهدة Dr درج / Cr 1000 — كما في ShiftsService.open
+      await post(db, tenantId, sd.branchId, fys, sd.openedAt, 'shift_open', row.id,
+        `تحويل عهدة صندوق إلى الدرج ${drawer.code} — افتتاح وردية ${fromAgora(sd.opening)} ₪`,
+        [{ accountCode: drawer.code, debitAgora: sd.opening }, { accountCode: CASH, creditAgora: sd.opening }]);
+      await audit(db, tenantId, { actorId: sd.cashierId, branchId: sd.branchId, action: 'open_shift', entity: 'shifts', entityId: row.id, diff: { openingAmountAgora: sd.opening, drawerAccountCode: drawer.code }, date: sd.openedAt });
+    }
+    const shiftCash = new Map<string, number>(); // shiftId → نقد الفواتير (يُرحَّل إلى حساب الدرج)
 
     // ── Sales ──
     const svcIds = new Set([...prod.values()].filter((p) => p.svc).map((p) => p.id));
@@ -760,8 +801,13 @@ async function main() {
         },
         select: { id: true },
       });
+      // نقد الوردية يُرحَّل إلى حساب درج العهدة — صفوف الدفعات تحتفظ بكود الطريقة (1000)
+      const drawerCode = ctx.shiftId ? drawerByShift.get(ctx.shiftId) : undefined;
       const byAcc = new Map<string, number>();
-      for (const p of payments) byAcc.set(p.accountCode, (byAcc.get(p.accountCode) ?? 0) + p.amountAgora);
+      for (const p of payments) {
+        const code = p.accountCode === CASH && drawerCode ? drawerCode : p.accountCode;
+        byAcc.set(code, (byAcc.get(code) ?? 0) + p.amountAgora);
+      }
       await post(db, ctx.tenantId, ctx.branchId, ctx.fys, ctx.date, 'sale', invoice.id, `فاتورة ${ctx.refNo}`, [
         ...[...byAcc.entries()].map(([code, amt]) => ({ accountCode: code, debitAgora: amt, customerId: code === AR ? ctx.customerId : null })),
         { accountCode: REV, creditAgora: totals.taxableTotalAgora },
@@ -1125,17 +1171,24 @@ async function main() {
         where: { id: shiftId },
         data: { closingExpected: dec(expected), closingActual: dec(actual), closedAt, closedBy: adminId },
       });
-      // فرق الصندوق يُرحَّل قيداً مزدوجاً (عجز Dr 5310 / Cr 1000 — فائض بالعكس) كما في ShiftsService.close
+      // تسليم العهدة عند الإقفال (كما في ShiftsService.close):
+      // Dr 1000 (المُسلَّم فعلياً) + Dr/Cr 5310 (العجز/الفائض) / Cr درج (رصيد العهدة) ⇒ الدرج يعود صفراً
       const diff = actual - expected;
+      const drawerCode = drawerByShift.get(shiftId);
       let diffEntryId: string | null = null;
-      if (diff !== 0) {
+      const closeLines: { accountCode: string; debitAgora?: number; creditAgora?: number }[] = [];
+      if (actual > 0) closeLines.push({ accountCode: CASH, debitAgora: actual });
+      if (drawerCode && expected > 0) closeLines.push({ accountCode: drawerCode, creditAgora: expected });
+      if (diff < 0) closeLines.push({ accountCode: CASH_DIFF, debitAgora: -diff });
+      else if (diff > 0) closeLines.push({ accountCode: CASH_DIFF, creditAgora: diff });
+      if (closeLines.length >= 2) {
         diffEntryId = await post(db, tenantId, s.branchId, fys, closedAt, 'shift_close', shiftId,
-          diff < 0 ? `عجز صندوق عند إقفال الوردية ${fromAgora(-diff)} ₪` : `فائض صندوق عند إقفال الوردية ${fromAgora(diff)} ₪`,
-          diff < 0
-            ? [{ accountCode: CASH_DIFF, debitAgora: -diff }, { accountCode: CASH, creditAgora: -diff }]
-            : [{ accountCode: CASH, debitAgora: diff }, { accountCode: CASH_DIFF, creditAgora: diff }]);
+          drawerCode
+            ? `تسليم عهدة الدرج ${drawerCode} إلى الصندوق${diff === 0 ? '' : diff < 0 ? ` — عجز ${fromAgora(-diff)} ₪` : ` — فائض ${fromAgora(diff)} ₪`}`
+            : diff < 0 ? `عجز صندوق عند إقفال الوردية ${fromAgora(-diff)} ₪` : `فائض صندوق عند إقفال الوردية ${fromAgora(diff)} ₪`,
+          closeLines);
       }
-      await audit(db, tenantId, { actorId: adminId, branchId: s.branchId, action: 'close_shift', entity: 'shifts', entityId: shiftId, diff: { expectedAgora: expected, actualAgora: actual, diffAgora: diff, entryId: diffEntryId } });
+      await audit(db, tenantId, { actorId: adminId, branchId: s.branchId, action: 'close_shift', entity: 'shifts', entityId: shiftId, diff: { expectedAgora: expected, actualAgora: actual, diffAgora: diff, drawerAccountCode: drawerCode ?? null, entryId: diffEntryId } });
     }
 
     // ── سجل دخول المستخدمين ──

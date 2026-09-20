@@ -10,9 +10,9 @@ import { computeInvoice } from '@medad/shared-types';
 // Prisma fully mocked; balance of every produced entry verified in-code.
 
  
-function makeDb(opts: { stockQty?: number; customer?: any; stockFind?: any; shift?: any } = {}) {
-  const created: { entries: any[]; invoices: any[]; audit: any[]; sync: any[] } = { entries: [], invoices: [], audit: [], sync: [] };
-  const accounts = ['1000', '1100', '1200', '1300', '1400', '1410', '1500', '2000', '2100', '3000', '3900', '4000', '4100', '5000', '5200', '5300']
+function makeDb(opts: { stockQty?: number; customer?: any; stockFind?: any; shift?: any; invoiceFind?: any } = {}) {
+  const created: { entries: any[]; invoices: any[]; returns: any[]; audit: any[]; sync: any[] } = { entries: [], invoices: [], returns: [], audit: [], sync: [] };
+  const accounts = ['1000', '1010', '1100', '1200', '1300', '1400', '1410', '1500', '2000', '2100', '3000', '3900', '4000', '4100', '5000', '5200', '5300', '5310']
     .map((code) => ({ code, id: `acc-${code}`, isClosed: false }));
   let entrySeq = 0;
   const db: any = {
@@ -33,7 +33,14 @@ function makeDb(opts: { stockQty?: number; customer?: any; stockFind?: any; shif
       update: jest.fn(async ({ data }: any) => ({ qty: data.qty })),
     },
     customer: { findFirst: jest.fn().mockResolvedValue(opts.customer ?? { id: 'c1', name: 'زبون نقدي', isCashDefault: true, creditLimit: '0.00' }) },
-    invoice: { create: jest.fn(async ({ data }: any) => { created.invoices.push(data); return { id: 'inv1' }; }) },
+    invoice: {
+      create: jest.fn(async ({ data }: any) => { created.invoices.push(data); return { id: 'inv1' }; }),
+      findFirst: jest.fn(async () => opts.invoiceFind ?? null),
+    },
+    saleReturn: {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(async ({ data }: any) => { created.returns.push(data); return { id: 'ret1' }; }),
+    },
     shift: { findFirst: jest.fn(async () => ('shift' in opts ? opts.shift : { id: 'sh1', branchId: 'b1', cashierId: 'u1', closedAt: null })) },
     auditLog: { create: jest.fn(async ({ data }: any) => { created.audit.push(data); return {}; }) },
     syncOperation: { create: jest.fn(async ({ data }: any) => { created.sync.push(data); return { id: 'so1' }; }), aggregate: jest.fn().mockResolvedValue({ _max: { lamport: 0 } }) },
@@ -213,5 +220,54 @@ describe('Invoice ↔ shift binding (ربط الفاتورة بالوردية)',
     const { db: db2, created } = makeDb({ shift: other });
     await sell(db2, { shiftId: 'sh1' }, ['pos.sell', 'pos.shift_any']);
     expect(created.invoices[0].shiftId).toBe('sh1');
+  });
+});
+
+// درج العهدة (§Phase4): نقد POS يُرحَّل إلى حساب درج الوردية بدل صندوق الفرع (1000)،
+// بينما تحتفظ صفوف الدفعات/المرتجعات بكود الطريقة — حتى يطابق رصيد الدرج النقد الفعلي في يد الكاشير.
+describe('Cash routing to the till drawer (توجيه النقد إلى درج العهدة)', () => {
+  const L = [{ variantId: 'v1', qty: 1, unitPriceAgora: 1000 }];
+  const P = [{ method: 'cash', accountCode: '1000', amountAgora: 1000 }];
+  const DRAWER_SHIFT = { id: 'sh1', branchId: 'b1', cashierId: 'u1', closedAt: null, drawer: { glAccountCode: '1010' } };
+  const SRC_INVOICE = {
+    id: 'inv9', tenantId: 't1', branchId: 'b1', status: 'posted', refNo: 'S-9', deletedAt: null, customerId: 'c1',
+    customer: { id: 'c1', name: 'زبون' },
+    lines: [{ id: 'l1', productId: 'p1', variantId: 'v1', qty: 2, netAgora: 2000, taxAgora: 0, costAgora: 600 }],
+  };
+  const codes = (e: any) => (e.lines.create as any[]).map((l) => l.accountId);
+
+  test('فاتورة نقدية على وردية بدرج ⇒ القيد على 1010 وصف الدفعة يبقى 1000', async () => {
+    const { db, created } = makeDb({ shift: DRAWER_SHIFT });
+    await buildSales(db).createInvoice('t1', ACTOR, { branchId: 'b1', shiftId: 'sh1', lines: L, payments: P });
+    const sale = created.entries.find((e) => e.sourceType === 'sale');
+    expect(codes(sale)).toContain('acc-1010');
+    expect(codes(sale)).not.toContain('acc-1000');
+    expect(created.invoices[0].payments.create).toEqual([expect.objectContaining({ method: 'cash', accountCode: '1000' })]);
+  });
+
+  test('وردية بلا درج (قديمة) ⇒ النقد يبقى على صندوق الفرع 1000', async () => {
+    const { db, created } = makeDb({ shift: { ...DRAWER_SHIFT, drawer: null } });
+    await buildSales(db).createInvoice('t1', ACTOR, { branchId: 'b1', shiftId: 'sh1', lines: L, payments: P });
+    expect(codes(created.entries.find((e) => e.sourceType === 'sale'))).toContain('acc-1000');
+  });
+
+  test('مرتجع نقدي أثناء وردية مفتوحة ⇒ يخرج من درج العهدة', async () => {
+    const { db, created } = makeDb({ shift: DRAWER_SHIFT, invoiceFind: SRC_INVOICE });
+    await buildSales(db).createReturn('t1', { userId: 'u1' }, {
+      sourceInvoiceId: 'inv9', lines: [{ variantId: 'v1', qty: 1 }], refundMethod: 'cash', refundAccountCode: '1000',
+    });
+    const ret = created.entries.find((e) => e.sourceType === 'sale_return');
+    expect(codes(ret)).toContain('acc-1010');
+    expect(codes(ret)).not.toContain('acc-1000');
+    expect(created.returns[0].refundAccountCode).toBe('1000'); // الوثيقة تحتفظ بطريقة الاسترداد
+    expect(created.audit[0].diff).toMatchObject({ refundAccountCode: '1010', refundGross: 1000 });
+  });
+
+  test('مرتجع نقدي بلا وردية مفتوحة ⇒ من صندوق الفرع 1000', async () => {
+    const { db, created } = makeDb({ shift: null, invoiceFind: SRC_INVOICE });
+    await buildSales(db).createReturn('t1', { userId: 'u1' }, {
+      sourceInvoiceId: 'inv9', lines: [{ variantId: 'v1', qty: 1 }], refundMethod: 'cash', refundAccountCode: '1000',
+    });
+    expect(codes(created.entries.find((e) => e.sourceType === 'sale_return'))).toContain('acc-1000');
   });
 });
