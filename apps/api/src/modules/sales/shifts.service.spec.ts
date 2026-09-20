@@ -364,6 +364,19 @@ describe('Shifts — مسار التوافق (وردية قديمة بلا در�
     expect(created.entries.length).toBe(0); // النقد لم يغادر 1000 ⇒ لا تسليم
   });
 
+  test('العجز/الفائض يُرحَّل 5310 مقابل 1000 فقط', async () => {
+    const short = legacyDb();
+    await build(short.db).close('t1', 'sh1', LEGACY_EXPECTED - 500, CASHIER);
+    expect(linesOf(short.created)).toContainEqual(expect.objectContaining({ accountId: `acc-${CASH_DIFF}`, debit: '5.00' }));
+    expect(linesOf(short.created)).toContainEqual(expect.objectContaining({ accountId: `acc-${CASH}`, credit: '5.00' }));
+    expect(linesOf(short.created).length).toBe(2);
+
+    const over = legacyDb();
+    await build(over.db).close('t1', 'sh1', LEGACY_EXPECTED + 1000, CASHIER);
+    expect(linesOf(over.created)).toContainEqual(expect.objectContaining({ accountId: `acc-${CASH}`, debit: '10.00' }));
+    expect(linesOf(over.created)).toContainEqual(expect.objectContaining({ accountId: `acc-${CASH_DIFF}`, credit: '10.00' }));
+  });
+
   test('تقرير وردية قديمة: قيد إقفالها وحده المستبعد، وتسليم درج وردية أخرى داخل النافذة محسوب', async () => {
     const closedAt = at(9);
     const expected = OPENING + LEGACY_FLOW + 12445;
