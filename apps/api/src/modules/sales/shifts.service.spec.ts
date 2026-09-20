@@ -18,9 +18,9 @@ const DRAWER = '1010';
 const T0 = new Date('2026-09-15T08:30:00.000Z');
 const at = (h: number) => new Date(T0.getTime() + h * 3600_000);
 
-interface L { accountCode: string; sourceType: string; debitAgora: number; creditAgora: number; date: Date; branchId: string }
-const line = (accountCode: string, sourceType: string, debitAgora: number, creditAgora: number, h: number, branchId = 'b1'): L =>
-  ({ accountCode, sourceType, debitAgora, creditAgora, date: at(h), branchId });
+interface L { accountCode: string; sourceType: string; debitAgora: number; creditAgora: number; date: Date; branchId: string; sourceId?: string }
+const line = (accountCode: string, sourceType: string, debitAgora: number, creditAgora: number, h: number, branchId = 'b1', sourceId?: string): L =>
+  ({ accountCode, sourceType, debitAgora, creditAgora, date: at(h), branchId, sourceId });
 
 /** قيود درج العهدة: عهدة 500₪ + مبيعات 128.80₪ − مرتجع 5₪ ⇒ رصيد الدرج 623.80₪ */
 const DRAWER_LINES: L[] = [
@@ -95,10 +95,12 @@ function makeDb(opts: {
     const to: Date | undefined = where?.entry?.date?.lte;
     const lt: Date | undefined = where?.entry?.date?.lt;
     const notIn: string[] = where?.entry?.sourceType?.notIn ?? [];
+    const not = where?.entry?.NOT as { sourceType?: string; sourceId?: string } | undefined;
     return lines
       .filter((l) => !codes || codes.includes(l.accountCode))
       .filter((l) => !branchId || l.branchId === branchId)
       .filter((l) => !notIn.includes(l.sourceType))
+      .filter((l) => !not || !(l.sourceType === not.sourceType && (not.sourceId === undefined || l.sourceId === not.sourceId)))
       .filter((l) => !from || l.date >= from)
       .filter((l) => !to || l.date <= to)
       .filter((l) => !lt || l.date < lt);
@@ -139,6 +141,7 @@ function makeDb(opts: {
             creditAgora: toAgora(String(l.credit)),
             date: data.date,
             branchId: data.branchId,
+            sourceId: data.sourceId,
           });
         }
         return { id: `e${created.entries.length}` };
