@@ -21,14 +21,13 @@ async function bootstrap() {
   const imageUploadJson = express.json({ limit: '10mb' });
   const defaultJson = express.json({ limit: '100kb' });
   const isImageUpload = (req: express.Request) => req.method === 'POST' && /^\/api\/catalog\/products\/[^/]+\/image\/?$/.test(req.originalUrl);
-  app.use((req, res, next) => (isImageUpload(req) ? imageUploadJson(req, res, next) : defaultJson(req, res, next)));
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => (isImageUpload(req) ? imageUploadJson(req, res, next) : defaultJson(req, res, next)));
   app.use(express.urlencoded({ extended: true, limit: '100kb' }));
   // صور الأصناف المرفوعة — عامة (بدون توكن) لأن <img> لا يرسل Authorization
   try {
     fs.mkdirSync(path.join(UPLOAD_DIR, 'products'), { recursive: true });
     app.useStaticAssets(UPLOAD_DIR, { prefix: '/api/uploads' });
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.warn(`تعذر تهيئة مجلد رفع الصور (${UPLOAD_DIR}) — رفع وعرض الصور معطل`, e);
   }
   const port = Number(process.env.PORT ?? 3000);

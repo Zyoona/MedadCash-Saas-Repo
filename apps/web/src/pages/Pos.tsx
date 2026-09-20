@@ -3,7 +3,7 @@ import { api, auditEvent, money } from '../api.js';
 import { computeInvoice } from '@medad/shared-types';
 import { Badge, Field, Money, ProductImage, SplitAgora, Tabs, useToast } from '../ui.js';
 import { useAuth } from '../auth.js';
-import { bankLabel, methodAr, PAY_METHODS, useBanks, usePaySources } from '../banks.js';
+import { bankLabel, PAY_METHODS, useBanks, usePaySources } from '../banks.js';
 
 // POS (§Phase4): بحث اسم/SKU/باركود + خصم المنتج وفاتورة + ضريبة أخيراً + دفع متعدد
 // + إرجاع الباقي بطريقة مختلفة (سالب) + مرتجعات + عروض أسعار — بنفس ترتيب الحساب الملزم.
@@ -13,10 +13,10 @@ const METHODS = PAY_METHODS.filter((m) => m.method !== 'credit');
 const MAX_OPEN_INVOICES = 8;
 
 interface SearchRes {
-  products: { id: string; name: string; sku: string | null; imageUrl: string | null; variants: { id: string; name: string; barcode: string }[]; branchData: { price: string }[] }[];
-  unitMatch: { id: string; barcode: string | null; product: { id: string; name: string; imageUrl: string | null; branchData: { price: string }[] } }[];
+  products: { id: string; name: string; sku: string | null; imageUrl: string | null; thumbUrl: string | null; variants: { id: string; name: string; barcode: string }[]; branchData: { price: string }[] }[];
+  unitMatch: { id: string; barcode: string | null; product: { id: string; name: string; imageUrl: string | null; thumbUrl: string | null; branchData: { price: string }[] } }[];
 }
-interface CartLine { productId: string; variantId: string | null; name: string; imageUrl: string | null; qty: number; priceAgora: number; lineDiscountAgora: number }
+interface CartLine { productId: string; variantId: string | null; name: string; imageUrl: string | null; thumbUrl: string | null; qty: number; priceAgora: number; lineDiscountAgora: number }
 interface Payment { method: string; accountCode: string; amountAgora: number }
 interface Customer { id: string; name: string; isCashDefault: boolean }
 interface Shift { id: string; openedAt: string }
@@ -103,17 +103,17 @@ export function Pos() {
     // باركود مباشر → أضف للسلة فوراً
     const exact = r.products.find((p) => p.variants.some((v) => v.barcode === term.trim()));
     if (exact) {
-      addToCart(exact.id, exact.variants[0].id, exact.name, exact.imageUrl, Math.round(Number(exact.branchData[0]?.price ?? 0) * 100));
+      addToCart(exact.id, exact.variants[0].id, exact.name, exact.imageUrl, exact.thumbUrl, Math.round(Number(exact.branchData[0]?.price ?? 0) * 100));
       setResults(null);
       setQ('');
     }
   };
 
-  const addToCart = (productId: string, variantId: string | null, name: string, imageUrl: string | null, priceAgora: number) => {
+  const addToCart = (productId: string, variantId: string | null, name: string, imageUrl: string | null, thumbUrl: string | null, priceAgora: number) => {
     patchActive((s) => {
       const existing = s.cart.find((l) => l.productId === productId && l.variantId === variantId && l.priceAgora === priceAgora);
       if (existing) return { ...s, cart: s.cart.map((l) => (l === existing ? { ...l, qty: l.qty + 1 } : l)) };
-      return { ...s, cart: [...s.cart, { productId, variantId, name, imageUrl, qty: 1, priceAgora, lineDiscountAgora: 0 }] };
+      return { ...s, cart: [...s.cart, { productId, variantId, name, imageUrl, thumbUrl, qty: 1, priceAgora, lineDiscountAgora: 0 }] };
     });
   };
 
@@ -238,13 +238,13 @@ export function Pos() {
                       {results.products.map((p) => {
                         const price = Math.round(Number(p.branchData[0]?.price ?? 0) * 100);
                         return p.variants.length > 0 ? p.variants.map((v) => (
-                          <button key={v.id} className="result-row" onClick={() => { addToCart(p.id, v.id, `${p.name} (${v.name})`, p.imageUrl, price); setResults(null); setQ(''); }}>
-                            <span className="result-main"><ProductImage src={p.imageUrl} alt={p.name} size={32} />{p.name} — {v.name} <small>{v.barcode}</small></span>
+                          <button key={v.id} className="result-row" onClick={() => { addToCart(p.id, v.id, `${p.name} (${v.name})`, p.imageUrl, p.thumbUrl, price); setResults(null); setQ(''); }}>
+                            <span className="result-main"><ProductImage src={p.imageUrl} thumb={p.thumbUrl} alt={p.name} size={32} />{p.name} — {v.name} <small>{v.barcode}</small></span>
                             <strong>{money(price)}</strong>
                           </button>
                         )) : (
-                          <button key={p.id} className="result-row" disabled={p.branchData.length === 0} onClick={() => { addToCart(p.id, null, p.name, p.imageUrl, price); setResults(null); setQ(''); }}>
-                            <span className="result-main"><ProductImage src={p.imageUrl} alt={p.name} size={32} />{p.name}</span>
+                          <button key={p.id} className="result-row" disabled={p.branchData.length === 0} onClick={() => { addToCart(p.id, null, p.name, p.imageUrl, p.thumbUrl, price); setResults(null); setQ(''); }}>
+                            <span className="result-main"><ProductImage src={p.imageUrl} thumb={p.thumbUrl} alt={p.name} size={32} />{p.name}</span>
                             <strong>{money(price)}</strong>
                           </button>
                         );
@@ -259,7 +259,7 @@ export function Pos() {
                   <tbody>
                     {active.cart.map((l, i) => (
                       <tr key={i}>
-                        <td><span className="cell-with-img"><ProductImage src={l.imageUrl} alt={l.name} />{l.name}</span></td>
+                        <td><span className="cell-with-img"><ProductImage src={l.imageUrl} thumb={l.thumbUrl} alt={l.name} />{l.name}</span></td>
                         <td><input type="number" min={1} value={l.qty} onChange={(e) => patchLine(i, { qty: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} style={{ width: 64 }} /></td>
                         <td><SplitAgora agora={l.priceAgora} label="السعر" onAgora={(v) => patchLine(i, { priceAgora: v })} /></td>
                         <td><SplitAgora agora={l.lineDiscountAgora} label="خصم المنتج" onAgora={(v) => patchLine(i, { lineDiscountAgora: Math.min(v, l.qty * l.priceAgora) })} /></td>
@@ -380,7 +380,7 @@ function ReturnTab({ onToast }: { onToast: (m: string, t?: 'ok' | 'bad') => void
           sourceInvoiceId: invoice.id, lines,
           restockingFeeAgora: fee,
           refundMethod: method,
-          refundAccountCode: method === 'credit' ? '1300' : method === 'bank' ? refundCode : '1000',
+          refundAccountCode: method === 'bank' ? refundCode : PAY_METHODS.find((m) => m.method === method)?.accountCode ?? '1000',
         },
       });
       onToast(`تم المرتجع — الرد: ${money(res.refundGrossAgora)}`);
@@ -407,7 +407,7 @@ function ReturnTab({ onToast }: { onToast: (m: string, t?: 'ok' | 'bad') => void
                   <tr key={l.id}>
                     <td>
                       <span className="cell-with-img">
-                        <ProductImage src={l.variant?.product?.imageUrl} alt={l.variant?.product?.name ?? 'صنف'} />
+                        <ProductImage src={l.variant?.product?.imageUrl} thumb={l.variant?.product?.thumbUrl} alt={l.variant?.product?.name ?? 'صنف'} />
                         {l.variant?.product?.name ?? l.productId}{l.variant ? ` — ${l.variant.name}` : ''}
                       </span>
                     </td>
@@ -427,7 +427,7 @@ function ReturnTab({ onToast }: { onToast: (m: string, t?: 'ok' | 'bad') => void
                 setMethod(m);
                 if (m === 'bank') setRefundCode(banks[0]?.glAccountCode ?? '1100');
               }}>
-                <option value="cash">نقد</option><option value="bank">بنك</option><option value="credit">حساب العميل</option>
+                {PAY_METHODS.filter((m) => m.method !== 'check').map((m) => <option key={m.method} value={m.method}>{m.label}</option>)}
               </select>
             </Field>
             {method === 'bank' && (
@@ -505,7 +505,7 @@ function QuotesTab({ onToast, canConvert }: { onToast: (m: string, t?: 'ok' | 'b
           <span className="row2" key={i}>
             <select value={p.accountCode} onChange={(e) => {
               const code = e.target.value;
-              setPayments(payments.map((x, j) => j === i ? { ...x, method: code === '1000' ? 'cash' : 'bank', accountCode: code } : x));
+              setPayments(payments.map((x, j) => j === i ? { ...x, method: PAY_METHODS.find((pm) => pm.accountCode === code)?.method ?? 'bank', accountCode: code } : x));
             }}>
               {sources.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
             </select>

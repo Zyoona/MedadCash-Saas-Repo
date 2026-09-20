@@ -15,6 +15,7 @@
     "pg:status": "node _tools/pg-run.js status",
     "db:migrate": "apps/api/node_modules/.bin/prisma migrate deploy --schema apps/api/prisma/schema.prisma",
     "db:seed": "ts-node --transpile-only apps/api/prisma/seed.ts",
+    "db:thumbs": "ts-node --transpile-only apps/api/prisma/backfill-thumbs.ts",
     "db:setup": "npm run pg:start && npm run db:migrate && npm run db:seed",
     "dev:api": "npm run start:dev -w apps/api",
     "dev:web": "npm run dev -w apps/web",

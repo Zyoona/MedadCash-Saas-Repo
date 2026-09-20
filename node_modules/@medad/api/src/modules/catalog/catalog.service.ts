@@ -7,6 +7,7 @@ import { PrismaService } from '../../prisma/prisma.service.js';
 import { agoraToDec, decToAgora } from '../../common/money.util.js';
 import { auditTx, type Db } from '../../common/ctx.js';
 import { PRODUCT_IMAGE_MAX_BYTES, UPLOAD_DIR } from '../../common/env.js';
+import sharp from 'sharp';
 
 // Catalog (§Phase2): central tenant-level catalog (name/barcode/category/unit),
 // price & cost per branch (ProductBranch), qty DERIVED from BranchStock only.
@@ -192,7 +193,8 @@ export class CatalogService {
           ...(patch.brandId !== undefined ? { brandId: patch.brandId } : {}),
           ...(patch.baseUnitId !== undefined ? { baseUnitId: patch.baseUnitId } : {}),
           ...(patch.lowStockDefault !== undefined ? { lowStockDefault: patch.lowStockDefault } : {}),
-          ...(patch.imageUrl !== undefined ? { imageUrl: patch.imageUrl } : {}),
+          // المصغّرة تُدار على الخادم عند الرفع فقط — أي تعديل مباشر للرابط يلغيها
+          ...(patch.imageUrl !== undefined ? { imageUrl: patch.imageUrl, thumbUrl: null } : {}),
         },
       });
       await auditTx(db, { tenantId, actorId, action: 'update', entity: 'products', entityId: id, diff: patch });
@@ -204,6 +206,8 @@ export class CatalogService {
     'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif',
   };
 
+  private static readonly THUMB_SIZE = 128; // مقاس مصغّرة الصنف (WebP)
+
   private static readonly IMAGE_URL_RE = /^\/api\/uploads\/products\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg|webp|gif)$/;
 
   private validateImageUrl(imageUrl: string | null | undefined): void {
@@ -213,7 +217,7 @@ export class CatalogService {
     }
   }
 
-  /** رفع صورة الصنف (data URL): تُحفظ على القرص وتُخدم عبر /api/uploads/products */
+  /** رفع صورة الصنف (data URL): تُحفظ على القرص وتُخدم عبر /api/uploads/products مع توليد مصغّرة WebP */
   async setProductImage(tenantId: string, id: string, dataUrl: string, actorId: string) {
     const p = await this.prisma.product.findFirst({ where: { id, tenantId, deletedAt: null } });
     if (!p) throw new NotFoundException('الصنف غير موجود');
@@ -228,22 +232,42 @@ export class CatalogService {
     const fileName = `${randomUUID()}.${ext}`;
     const filePath = path.join(dir, fileName);
     await fs.promises.writeFile(filePath, buffer);
+    // مصغّرة 128×128 WebP لعرض سريع في الكاشير والقوائم (تحترم دوران EXIF)
+    const thumbName = `${randomUUID()}_t.webp`;
+    const thumbPath = path.join(dir, thumbName);
+    try {
+      await sharp(filePath)
+        .rotate()
+        .resize(CatalogService.THUMB_SIZE, CatalogService.THUMB_SIZE, { fit: 'cover', withoutEnlargement: true })
+        .webp({ quality: 72 })
+        .toFile(thumbPath);
+    } catch {
+      await fs.promises.unlink(filePath).catch(() => undefined);
+      await fs.promises.unlink(thumbPath).catch(() => undefined);
+      throw new BadRequestException('تعذر معالجة الصورة — تأكد من أنها صورة صالحة');
+    }
     const imageUrl = `/api/uploads/products/${fileName}`;
+    const thumbUrl = `/api/uploads/products/${thumbName}`;
     try {
       await this.prisma.$transaction(async (db: Db) => {
-        await db.product.update({ where: { id }, data: { imageUrl } });
-        await auditTx(db, { tenantId, actorId, action: 'update', entity: 'products', entityId: id, diff: { imageUrl } });
+        await db.product.update({ where: { id }, data: { imageUrl, thumbUrl } });
+        await auditTx(db, { tenantId, actorId, action: 'update', entity: 'products', entityId: id, diff: { imageUrl, thumbUrl } });
       });
     } catch (e) {
       await fs.promises.unlink(filePath).catch(() => undefined);
+      await fs.promises.unlink(thumbPath).catch(() => undefined);
       throw e;
     }
-    // حذف الصورة القديمة بعد نجاح المعاملة فقط
+    // حذف الصورة القديمة ومصغّرتها بعد نجاح المعاملة فقط
     if (p.imageUrl?.startsWith('/api/uploads/products/')) {
       const oldPath = path.join(dir, path.basename(p.imageUrl));
       void fs.promises.unlink(oldPath).catch(() => undefined);
     }
-    return { imageUrl };
+    if (p.thumbUrl?.startsWith('/api/uploads/products/')) {
+      const oldThumb = path.join(dir, path.basename(p.thumbUrl));
+      void fs.promises.unlink(oldThumb).catch(() => undefined);
+    }
+    return { imageUrl, thumbUrl };
   }
 
   /** Simple → variants (§3): create variants, parent becomes a non-sellable container. Old sales stay linked to parent. */

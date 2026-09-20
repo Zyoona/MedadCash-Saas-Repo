@@ -4,7 +4,7 @@ import { Badge, Field, Modal, ProductImage, readImageFile, useToast } from '../u
 import { PageLoader } from '../Loader.js';
 
 interface StockRow {
-  id: string; name: string; sku: string | null; isContainer: boolean; imageUrl: string | null;
+  id: string; name: string; sku: string | null; isContainer: boolean; imageUrl: string | null; thumbUrl: string | null;
   category: string | null; brand: string | null;
   priceAgora: number | null; costAgora: number | null; minAlert: number;
   rows: { variantId: string | null; qty: number }[];
@@ -42,7 +42,7 @@ export function Inventory() {
             <tr key={r.id}>
               <td>
                 <span className="cell-with-img">
-                  <ProductImage src={r.imageUrl} alt={r.name} />
+                  <ProductImage src={r.imageUrl} thumb={r.thumbUrl} alt={r.name} />
                   {r.name}{r.isContainer ? ' (حاوية)' : ''}
                 </span>
               </td>
@@ -97,11 +97,12 @@ function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; 
           branches: branch ? [{ branchId: branch.id, priceAgora: form.priceAgora, costAgora: form.costAgora }] : [],
         },
       });
+      let imgErr = '';
       if (imageDataUrl && created?.id) {
         try { await api(`/catalog/products/${created.id}/image`, { method: 'POST', body: { dataUrl: imageDataUrl } }); }
-        catch (e) { showToast((e as Error).message, 'bad'); }
+        catch (e) { imgErr = (e as Error).message; }
       }
-      showToast('أُنشئ الصنف');
+      showToast(imgErr ? `أُنشئ الصنف لكن فشل رفع الصورة: ${imgErr}` : 'أُنشئ الصنف', imgErr ? 'bad' : 'ok');
       onDone();
     } catch (e) { showToast((e as Error).message, 'bad'); }
   };
@@ -243,7 +244,7 @@ function ProductModal({ product, onClose, onDone, showToast }: { product: StockR
         <>
           <h4>صورة الصنف</h4>
           <div className="img-editor">
-            <ProductImage src={imageDataUrl ?? detail.imageUrl} alt={product.name} size={72} />
+            <ProductImage src={imageDataUrl ?? detail.imageUrl} thumb={imageDataUrl ? undefined : detail.thumbUrl} alt={product.name} size={72} />
             <Field label="اختيار صورة (اختياري)">
               <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(e) => void pickImage(e.target.files?.[0])} />
             </Field>

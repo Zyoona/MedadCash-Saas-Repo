@@ -39,27 +39,33 @@ export function Money({ agora, className }: { agora: number | null | undefined; 
   return <span className={className}>{agora === null || agora === undefined ? '—' : money(agora)}</span>;
 }
 
-/** خانتا مبلغ: شيكل + أغورات — تُعرض القيمة كما يقرأها المستخدم (17 . 50 = 17.50 ₪) بدل 1750 أغورة. */
-export function SplitAgora({ agora, onAgora, disabled, label }: { agora: number; onAgora: (agora: number) => void; disabled?: boolean; label?: string }) {
-  const abs = Math.max(0, Math.round(Number.isFinite(agora) ? agora : 0));
-  const shekels = Math.floor(abs / AGORA_PER_SHEKEL);
+/** خانتا مبلغ: شيكل + أغورات — تُعرض القيمة كما يقرأها المستخدم (17 . 50 = 17.50 ₪) بدل 1750 أغورة.
+ *  allowNegative: لصفوف الدفعات حيث السالب = إرجاع باقي بطريقة مختلفة (§4 صف 8). */
+export function SplitAgora({ agora, onAgora, disabled, label, allowNegative }: { agora: number; onAgora: (agora: number) => void; disabled?: boolean; label?: string; allowNegative?: boolean }) {
+  const val = Math.round(Number.isFinite(agora) ? agora : 0);
+  const neg = allowNegative && val < 0;
+  const abs = Math.abs(val);
+  const shekels = (neg ? -1 : 1) * Math.floor(abs / AGORA_PER_SHEKEL);
   const cents = abs % AGORA_PER_SHEKEL;
   const emit = (nextShekels: number, nextCents: number) => {
-    onAgora(Math.max(0, nextShekels) * AGORA_PER_SHEKEL + Math.min(AGORA_PER_SHEKEL - 1, Math.max(0, nextCents)));
+    const s = Math.trunc(nextShekels) || 0;
+    const c = Math.min(AGORA_PER_SHEKEL - 1, Math.max(0, Math.trunc(nextCents) || 0));
+    if (allowNegative) onAgora(s * AGORA_PER_SHEKEL + (s < 0 ? -c : c));
+    else onAgora(Math.max(0, s) * AGORA_PER_SHEKEL + c);
   };
   return (
     <span className="split-agora">
       <input
-        type="number" min={0} inputMode="numeric" disabled={disabled} value={shekels}
+        type="number" min={allowNegative ? undefined : 0} inputMode="numeric" disabled={disabled} value={shekels}
         aria-label={label ? `${label} — شيكل` : 'شيكل'}
-        onChange={(e) => emit(Math.floor(Number(e.target.value) || 0), cents)}
+        onChange={(e) => emit(Math.trunc(Number(e.target.value) || 0), cents)}
       />
       <span className="split-dot" aria-hidden="true">.</span>
       <input
         type="number" min={0} max={AGORA_PER_SHEKEL - 1} inputMode="numeric" disabled={disabled}
         value={String(cents).padStart(2, '0')}
         aria-label={label ? `${label} — أغورات` : 'أغورات'}
-        onChange={(e) => emit(shekels, Math.floor(Number(e.target.value) || 0))}
+        onChange={(e) => emit(shekels, Math.trunc(Number(e.target.value) || 0))}
       />
       <span className="split-cur" aria-hidden="true">₪</span>
     </span>
@@ -70,33 +76,58 @@ export function Badge({ tone, children }: { tone: 'ok' | 'warn' | 'bad'; childre
   return <span className={`badge ${tone}`}>{children}</span>;
 }
 
-export const DEFAULT_PRODUCT_IMAGE = '/product.png';
+export const DEFAULT_PRODUCT_IMAGE = '/product-default.png';
 
-/** صورة الصنف — تظهر الصورة الافتراضية عند غياب الصنف أو فشل تحميل صورته */
-export function ProductImage({ src, alt, size = 36 }: { src?: string | null; alt: string; size?: number }) {
-  const [broken, setBroken] = useState(false);
-  useEffect(() => { setBroken(false); }, [src]);
+/** صورة الصنف — تفضّل المصغّرة (128px) ثم الأصلية ثم الصورة الافتراضية عند الغياب أو فشل التحميل */
+export function ProductImage({ src, thumb, alt, size = 36 }: { src?: string | null; thumb?: string | null; alt: string; size?: number }) {
+  const [stage, setStage] = useState(() => (thumb ? 0 : src ? 1 : 2));
+  useEffect(() => { setStage(thumb ? 0 : src ? 1 : 2); }, [src, thumb]);
+  const url = stage === 0 && thumb ? thumb : stage <= 1 && src ? src : DEFAULT_PRODUCT_IMAGE;
   return (
     <img
       className="prod-img"
-      src={!src || broken ? DEFAULT_PRODUCT_IMAGE : src}
+      src={url}
       alt={alt}
       width={size}
       height={size}
       loading="lazy"
-      onError={() => setBroken(true)}
+      onError={() => setStage((s) => s + 1)}
     />
   );
 }
 
-/** قراءة ملف صورة محلي إلى data URL لرفعه إلى الخادم */
-export function readImageFile(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
+/** قراءة ملف صورة محلي، تصغيره (لعرضه كصورة مصغرة دون تحميل ملفات ضخمة) ثم إرجاعه data URL للرفع */
+export function readImageFile(file: File, maxDim = 512): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(new Error('تعذر قراءة الصورة'));
     reader.readAsDataURL(file);
-  });
+  }).then((dataUrl) => downscaleDataUrl(dataUrl, maxDim));
+}
+
+async function downscaleDataUrl(dataUrl: string, maxDim: number): Promise<string> {
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('تعذر قراءة الصورة'));
+      el.src = dataUrl;
+    });
+    const w = img.width || 1;
+    const h = img.height || 1;
+    const scale = Math.min(1, maxDim / Math.max(w, h));
+    if (scale === 1 && dataUrl.length < 300_000) return dataUrl;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return dataUrl;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/webp', 0.85) || dataUrl;
+  } catch {
+    return dataUrl;
+  }
 }
 
 export function useToast(): [ReactNode, (msg: string, tone?: 'ok' | 'bad') => void] {
@@ -298,18 +329,20 @@ export function useLiveClock(): string {
   return now.toLocaleTimeString('ar', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+/** توليد وتنزيل ملف CSV (BOM للعربية) — يُستعمل من CsvButton ومن التصدير غير المتزامن */
+export function downloadCsv(filename: string, rows: Record<string, unknown>[]): void {
+  if (!rows.length) return;
+  const head = Object.keys(rows[0]);
+  const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = `\uFEFF${head.map(esc).join(',')}\n${rows.map((r) => head.map((h) => esc(r[h])).join(',')).join('\n')}`;
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function CsvButton({ filename, rows }: { filename: string; rows: Record<string, unknown>[] }) {
-  const download = () => {
-    if (!rows.length) return;
-    const head = Object.keys(rows[0]);
-    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const csv = `\uFEFF${head.map(esc).join(',')}\n${rows.map((r) => head.map((h) => esc(r[h])).join(',')).join('\n')}`;
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-  return <button className="btn secondary" onClick={download}>تصدير CSV</button>;
+  return <button className="btn secondary" onClick={() => downloadCsv(filename, rows)}>تصدير CSV</button>;
 }

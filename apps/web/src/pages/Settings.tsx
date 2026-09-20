@@ -24,6 +24,7 @@ function GeneralTab() {
   const [s, setS] = useState<Record<string, any>>({});
   const [driveUrl, setDriveUrl] = useState('');
   const [driveToken, setDriveToken] = useState('');
+  const [driveOAuth, setDriveOAuth] = useState({ clientId: '', clientSecret: '', refreshToken: '', folderId: '' });
   const [toast, showToast] = useToast();
 
   useEffect(() => { api<Record<string, any>>('/settings').then(setS).catch((e) => showToast((e as Error).message, 'bad')); }, []);
@@ -59,11 +60,37 @@ function GeneralTab() {
       </div>
       <h4>Google Drive (يُخزن مشفراً AES-256-GCM)</h4>
       <div className="row2 wrap">
-        <input placeholder="uploadUrl" value={driveUrl} onChange={(e) => setDriveUrl(e.target.value)} />
-        <input placeholder="token" type="password" value={driveToken} onChange={(e) => setDriveToken(e.target.value)} />
-        <button className="btn" onClick={() => save('drive_config', { configured: !!driveUrl && !!driveToken, uploadUrl: driveUrl, token: driveToken })}>حفظ Drive</button>
+        <input placeholder="Client ID" value={driveOAuth.clientId} onChange={(e) => setDriveOAuth({ ...driveOAuth, clientId: e.target.value })} />
+        <input placeholder="Client Secret" type="password" value={driveOAuth.clientSecret} onChange={(e) => setDriveOAuth({ ...driveOAuth, clientSecret: e.target.value })} />
+        <input placeholder="Refresh Token" type="password" value={driveOAuth.refreshToken} onChange={(e) => setDriveOAuth({ ...driveOAuth, refreshToken: e.target.value })} />
+        <input placeholder="معرّف المجلد (اختياري)" value={driveOAuth.folderId} onChange={(e) => setDriveOAuth({ ...driveOAuth, folderId: e.target.value })} />
+      </div>
+      <div className="row2 wrap">
+        <input placeholder="وضع بديل — uploadUrl" value={driveUrl} onChange={(e) => setDriveUrl(e.target.value)} />
+        <input placeholder="وضع بديل — token" type="password" value={driveToken} onChange={(e) => setDriveToken(e.target.value)} />
+        <button
+          className="btn"
+          onClick={() => {
+            const native = !!(driveOAuth.clientId && driveOAuth.clientSecret && driveOAuth.refreshToken);
+            const generic = !!(driveUrl && driveToken);
+            save('drive_config', {
+              configured: native || generic,
+              clientId: driveOAuth.clientId,
+              clientSecret: driveOAuth.clientSecret,
+              refreshToken: driveOAuth.refreshToken,
+              folderId: driveOAuth.folderId,
+              uploadUrl: driveUrl,
+              token: driveToken,
+            });
+          }}
+        >
+          حفظ Drive
+        </button>
         <Badge tone={s.drive_config?.configured ? 'ok' : 'warn'}>{s.drive_config?.configured ? 'مهيأ' : 'غير مهيأ'}</Badge>
       </div>
+      <p className="muted">
+        الربط الأصلي: Client ID و Client Secret و Refresh Token (نطاق drive.file) — تُجدد الرموز تلقائياً قبل كل نسخة. بعدها جرّب من صفحة المزامنة ← "رفع إلى Drive".
+      </p>
     </div>
   );
 }

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, auditEvent, money } from '../api.js';
-import { Badge, CsvButton, Field, Modal, Money, Tabs, useToast } from '../ui.js';
+import { Badge, downloadCsv, Field, Modal, Money, Tabs, useToast } from '../ui.js';
+import { methodAr } from '../banks.js';
 
 interface InvoiceRow {
-  id: string; branchId: string; refNo: string | null; status: string; invoiceDiscountAgora: number; createdAt: string;
+  id: string; branchId: string; refNo: string | null; status: string; createdAt: string;
   customer: { id: string; name: string };
   lines: { netAgora: number; qty: number }[];
   payments: { method: string; accountCode: string; amountAgora: number }[];
@@ -13,7 +14,7 @@ interface InvoiceList { total: number; page: number; pageSize: number; rows: Inv
 
 interface InvoiceLineFull {
   id: string; qty: number; unitPriceAgora: number; lineDiscountAgora: number; invoiceDiscountShareAgora: number;
-  taxRateBps: number; taxAgora: number; netAgora: number; variantId: string | null; productId: string | null;
+  taxAgora: number; netAgora: number; variantId: string | null; productId: string | null;
   variant?: { id: string; name: string; barcode: string | null; product?: { id: string; name: string } } | null;
 }
 interface InvoiceDetail {
@@ -31,8 +32,6 @@ interface ReturnRow {
   lines: { variantId: string; qty: number }[];
 }
 
-const METHOD_AR: Record<string, string> = { cash: 'نقد', bank: 'بنك', check: 'شيك', credit: 'ذمة (آجل)' };
-
 const STATUS_AR: Record<string, { label: string; tone: 'ok' | 'warn' | 'bad' }> = {
   posted: { label: 'مُسجلة', tone: 'ok' },
   draft: { label: 'مسودة', tone: 'warn' },
@@ -42,7 +41,7 @@ const STATUS_AR: Record<string, { label: string; tone: 'ok' | 'warn' | 'bad' }> 
 const PAGE_SIZE = 25;
 const dtShort = (iso: string) => new Date(iso).toLocaleString('ar', { dateStyle: 'short', timeStyle: 'short' });
 const paySummary = (payments: { method: string; amountAgora: number }[]) =>
-  payments.length === 0 ? 'ذمة' : payments.map((p) => `${METHOD_AR[p.method] ?? p.method} ${money(p.amountAgora)}`).join(' + ');
+  payments.length === 0 ? 'ذمة' : payments.map((p) => `${methodAr(p.method)} ${money(p.amountAgora)}`).join(' + ');
 
 export function Sales() {
   const [tab, setTab] = useState('invoices');
@@ -90,6 +89,7 @@ function InvoicesTab({ branchId, branches, showToast }: {
   const [ref, setRef] = useState('');
   const [page, setPage] = useState(1);
   const [nonce, setNonce] = useState(0);
+  const [exporting, setExporting] = useState(false);
   const [data, setData] = useState<InvoiceList | null>(null);
   const [detail, setDetail] = useState<InvoiceDetail | null>(null);
 
@@ -97,11 +97,13 @@ function InvoicesTab({ branchId, branches, showToast }: {
     api<{ id: string; name: string }[]>('/parties/customers').then(setCustomers).catch(() => undefined);
   }, []);
 
+  useEffect(() => { setPage(1); }, [branchId]);
+
   const query = useMemo(() => {
     const p = new URLSearchParams();
     if (branchId) p.set('branchId', branchId);
     if (customerId) p.set('customerId', customerId);
-    if (from) p.set('from', from);
+    if (from) p.set('from', `${from}T00:00:00.000`);
     if (to) p.set('to', `${to}T23:59:59.999`);
     if (ref.trim()) p.set('refNo', ref.trim());
     p.set('page', String(page));
@@ -128,14 +130,36 @@ function InvoicesTab({ branchId, branches, showToast }: {
   };
 
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
-  const csvRows = (data?.rows ?? []).map((r) => ({
+  const toCsvRow = (r: InvoiceRow) => ({
     التاريخ: dtShort(r.createdAt),
     المرجع: r.refNo ?? r.id.slice(0, 8),
     الزبون: r.customer.name,
     الأسطر: r.lines.length,
     الإجمالي: money(r.totalAgora),
     الدفع: paySummary(r.payments),
-  }));
+  });
+
+  // تصدير كل نتائج الفلترة الحالية (وليس الصفحة الظاهرة فقط)
+  const exportAll = async () => {
+    if (!data || data.rows.length === 0) return;
+    setExporting(true);
+    try {
+      const base = new URLSearchParams(query);
+      base.set('pageSize', '200');
+      const all: InvoiceRow[] = [];
+      for (let page1 = 1; all.length < data.total && page1 <= 1000; page1++) {
+        base.set('page', String(page1));
+        const d = await api<InvoiceList>(`/sales/invoices?${base.toString()}`);
+        all.push(...d.rows);
+        if (d.rows.length < 200) break;
+      }
+      downloadCsv('sales_invoices.csv', all.map(toCsvRow));
+    } catch (e) {
+      showToast((e as Error).message, 'bad');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div>
@@ -157,7 +181,7 @@ function InvoicesTab({ branchId, branches, showToast }: {
           />
         </Field>
         <button className="btn secondary" onClick={applyRef}>بحث</button>
-        <CsvButton filename="sales_invoices.csv" rows={csvRows} />
+        <button className="btn secondary" disabled={exporting || !data || data.rows.length === 0} onClick={() => void exportAll()}>{exporting ? 'جارٍ التصدير...' : 'تصدير الكل CSV'}</button>
       </div>
       <table className="grid">
         <thead>
@@ -237,6 +261,7 @@ function InvoiceDetailModal({ detail, onClose }: { detail: InvoiceDetail; onClos
         </tbody>
       </table>
       <div className="totals">
+        <div><span>خصم فاتورة</span><Money agora={detail.invoiceDiscountAgora} /></div>
         <div><span>الإجمالي</span><Money agora={detail.totalAgora} className="grand" /></div>
         <div><span>المدفوع</span><Money agora={paidNet} /></div>
         <div><span>{remainder > 0 ? 'ذمة (آجل)' : 'الباقي'}</span><Money agora={Math.abs(remainder)} /></div>
@@ -248,7 +273,7 @@ function InvoiceDetailModal({ detail, onClose }: { detail: InvoiceDetail; onClos
         <tbody>
           {detail.payments.map((p) => (
             <tr key={p.id}>
-              <td>{METHOD_AR[p.method] ?? p.method}{p.amountAgora < 0 ? ' (إرجاع باقي)' : ''}</td>
+              <td>{methodAr(p.method)}{p.amountAgora < 0 ? ' (إرجاع باقي)' : ''}</td>
               <td className="mono">{p.accountCode}</td>
               <td><Money agora={p.amountAgora} /></td>
             </tr>
@@ -279,7 +304,7 @@ function ReturnsTab({ branchId, showToast }: { branchId: string; showToast: (m: 
               <td>{dtShort(r.createdAt)}</td>
               <td className="mono">{r.sourceInvoiceId.slice(0, 8)}</td>
               <td>{r.lines.reduce((s, l) => s + l.qty, 0)}</td>
-              <td>{METHOD_AR[r.refundMethod] ?? r.refundMethod}</td>
+              <td>{methodAr(r.refundMethod)}</td>
               <td><Money agora={r.restockingFeeAgora} /></td>
             </tr>
           ))}

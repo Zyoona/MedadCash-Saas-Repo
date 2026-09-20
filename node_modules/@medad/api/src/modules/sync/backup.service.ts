@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { PrismaService } from '../../prisma/prisma.service.js';
@@ -58,31 +59,88 @@ export class LocalBackupProvider implements BackupProvider {
   }
 }
 
+type DriveCfg = {
+  configured?: boolean;
+  // Generic mode: any PUT endpoint (WebDAV/bridge).
+  uploadUrl?: string;
+  token?: string;
+  // Native Google Drive mode: OAuth refresh token flow (access tokens expire in ~1h).
+  clientId?: string;
+  clientSecret?: string;
+  refreshToken?: string;
+  folderId?: string;
+};
+
 @Injectable()
 export class DriveBackupProvider implements BackupProvider {
   readonly name = 'drive';
   constructor(private readonly prisma: PrismaService, private readonly local: LocalBackupProvider) {}
 
-  async backup(tenantId: string): Promise<{ filePath: string; bytes: number }> {
+  private async loadCfg(tenantId: string): Promise<DriveCfg> {
     const cfgRaw = await this.prisma.setting.findFirst({ where: { tenantId, branchId: null, key: 'drive_config' } });
-    let cfg: { configured?: boolean; uploadUrl?: string; token?: string } = { configured: false };
-    if (cfgRaw) {
-      cfg = typeof cfgRaw.value === 'string' && cfgRaw.value.startsWith('v1:')
-        ? decryptJson<{ configured?: boolean; uploadUrl?: string; token?: string }>(cfgRaw.value)
-        : (cfgRaw.value as typeof cfg);
-    }
-    if (!cfg?.configured || !cfg.uploadUrl || !cfg.token) {
-      throw new BadRequestException('خدمة النسخ السحابي (Drive) غير مهيأة — أضف رابط الرفع (uploadUrl) ورمز الوصول (token) من شاشة الإعدادات');
-    }
-    // Build the archive locally first, then upload to the configured endpoint (Drive/WebDAV-compatible).
-    const local = await this.local.backup(tenantId);
-    const body = fs.readFileSync(local.filePath);
-    const res = await fetch(cfg.uploadUrl, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${cfg.token}`, 'Content-Type': 'application/json' },
-      body,
+    if (!cfgRaw) return { configured: false };
+    return typeof cfgRaw.value === 'string' && cfgRaw.value.startsWith('v1:')
+      ? decryptJson<DriveCfg>(cfgRaw.value)
+      : (cfgRaw.value as DriveCfg);
+  }
+
+  /** Exchange the long-lived refresh token for a short-lived access token (before each upload). */
+  private async refreshAccessToken(cfg: DriveCfg): Promise<string> {
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: cfg.clientId ?? '',
+        client_secret: cfg.clientSecret ?? '',
+        refresh_token: cfg.refreshToken ?? '',
+        grant_type: 'refresh_token',
+      }),
     });
-    if (!res.ok) throw new BadRequestException(`فشل رفع النسخة الاحتياطية (رمز الخطأ: ${res.status})`);
+    const json = (await res.json().catch(() => ({}))) as { access_token?: string; error_description?: string };
+    if (!res.ok || !json.access_token) {
+      throw new BadRequestException(`فشل تجديد رمز الوصول من جوجل — تحقق من Client ID/Secret/Refresh Token (${json.error_description ?? res.status})`);
+    }
+    return json.access_token;
+  }
+
+  async backup(tenantId: string): Promise<{ filePath: string; bytes: number }> {
+    const cfg = await this.loadCfg(tenantId);
+    const native = !!(cfg.clientId && cfg.clientSecret && cfg.refreshToken);
+    const generic = !!(cfg.uploadUrl && cfg.token);
+    if (!cfg?.configured || (!native && !generic)) {
+      throw new BadRequestException('خدمة النسخ السحابي (Drive) غير مهيأة — أدخل Client ID و Client Secret و Refresh Token من شاشة الإعدادات (أو uploadUrl و token للوضع البديل)');
+    }
+    // Build the archive locally first, then upload to the configured destination.
+    const local = await this.local.backup(tenantId);
+    const fileName = path.basename(local.filePath);
+    if (native) {
+      const token = await this.refreshAccessToken(cfg);
+      const meta: Record<string, unknown> = { name: fileName };
+      if (cfg.folderId) meta.parents = [cfg.folderId];
+      const boundary = 'medad-' + crypto.randomUUID();
+      const pre = Buffer.from(
+        `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`,
+        'utf8',
+      );
+      const post = Buffer.from(`\r\n--${boundary}--`, 'utf8');
+      const body = Buffer.concat([pre, fs.readFileSync(local.filePath), post]);
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+        body: new Uint8Array(body),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        throw new BadRequestException(`فشل رفع النسخة الاحتياطية إلى Drive (رمز الخطأ: ${res.status}) ${errText.slice(0, 200)}`);
+      }
+    } else {
+      const res = await fetch(cfg.uploadUrl!, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${cfg.token}`, 'Content-Type': 'application/json' },
+        body: fs.readFileSync(local.filePath),
+      });
+      if (!res.ok) throw new BadRequestException(`فشل رفع النسخة الاحتياطية (رمز الخطأ: ${res.status})`);
+    }
     return local;
   }
 }

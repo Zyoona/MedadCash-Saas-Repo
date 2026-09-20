@@ -500,7 +500,7 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
 .result-row:hover { border-color: var(--accent); }
 .result-main { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 
-/* صور الأصناف — تظهر في الكاشير والمخزون والجرد؛ الافتراضي /product.png */
+/* صور الأصناف — تظهر في الكاشير والمخزون والجرد؛ الافتراضي /product-default.png مع مصغّرات 128px */
 .prod-img { flex: none; width: 36px; height: 36px; object-fit: cover; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .cell-with-img { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .img-editor { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0; }
