@@ -2,10 +2,10 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, ty
 import { AGORA_PER_SHEKEL } from '@medad/shared-types';
 import { money } from './api.js';
 
-export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className={wide ? 'modal modal-wide' : 'modal'} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{title}</h3>
           <button className="btn secondary" onClick={onClose}>✕</button>

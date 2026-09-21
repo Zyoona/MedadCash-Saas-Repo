@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { toAgora } from '@medad/shared-types';
 import { api, money } from '../api.js';
 import { Badge, Field, Modal, Money, useToast } from '../ui.js';
 import { usePaySources } from '../banks.js';
@@ -16,6 +18,7 @@ export function Purchases() {
   const [receiving, setReceiving] = useState<{ id: string; ref: string; amount: number; code: string } | null>(null);
   const { sources } = usePaySources(true);
   const [toast, showToast] = useToast();
+  const navigate = useNavigate();
 
   const load = () => api<PurchaseRow[]>('/purchases').then(setRows).catch((e) => showToast((e as Error).message, 'bad'));
   useEffect(() => { void load(); }, []);
@@ -52,6 +55,7 @@ export function Purchases() {
               <td><Money agora={p.taxAgora} /></td>
               <td><Badge tone={p.status === 'received' ? 'ok' : 'warn'}>{p.status === 'received' ? 'مستلمة' : p.status === 'pending' ? 'معلقة' : 'طلبية'}</Badge></td>
               <td className="actions">
+                <button className="btn secondary small" onClick={() => navigate(`/purchases/${p.id}`)}>تفاصيل</button>
                 {p.status === 'ordered' && <button className="btn secondary small" onClick={() => act(p.id, 'pending')}>تعليق</button>}
                 {p.status !== 'received' && (
                   <button className="btn small" onClick={() => setReceiving({ id: p.id, ref: p.refNo ?? p.id.slice(0, 8), amount: 0, code: sources[0]?.code ?? '1000' })}>استلام + دفع</button>
@@ -59,6 +63,7 @@ export function Purchases() {
               </td>
             </tr>
           ))}
+          {rows.length === 0 && <tr><td colSpan={6}>لا توجد فواتير شراء</td></tr>}
         </tbody>
       </table>
       {receiving && (
@@ -77,46 +82,69 @@ export function Purchases() {
   );
 }
 
+interface VariantOption {
+  variantId: string; label: string; barcode: string | null; sku: string | null;
+  imageUrl: string | null; thumbUrl: string | null; costAgora: number | null;
+}
+interface DraftLine {
+  uid: string; variantId: string | null; label: string;
+  qty: number; unitCostAgora: number; lineDiscountAgora: number;
+}
+
+let draftLineSeq = 0;
+const newDraftLine = (): DraftLine => ({ uid: `pl-${++draftLineSeq}`, variantId: null, label: '', qty: 1, unitCostAgora: 0, lineDiscountAgora: 0 });
+
 function NewPurchase({ onClose, onDone, showToast }: { onClose: () => void; onDone: () => void; showToast: (m: string, t?: 'ok' | 'bad') => void }) {
   const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
   const [supplierId, setSupplierId] = useState('');
   const [refNo, setRefNo] = useState('');
   const [discountAgora, setDiscount] = useState(0);
   const [taxBps, setTaxBps] = useState(0);
-  const [lines, setLines] = useState<{ variantName: string; qty: number; unitCostAgora: number; lineDiscountAgora: number }[]>([]);
+  const [lines, setLines] = useState<DraftLine[]>([newDraftLine()]);
   const [payAgora, setPay] = useState(0);
-  const [variants, setVariants] = useState<{ id: string; label: string }[]>([]);
+  const [branchId, setBranchId] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     api<any[]>('/parties/suppliers').then((s) => {
       setSuppliers(s);
       if (s[0]) setSupplierId(s[0].id);
     });
-    api<any[]>('/inventory/stock').then((rows) =>
-      setVariants(rows.flatMap((p) => p.variants.map((v: any) => ({ id: v.id, label: `${p.name} — ${v.name}` })))),
-    );
+    api<any[]>('/org/branches').then((bs) => { if (bs[0]) setBranchId(bs[0].id); }).catch(() => undefined);
   }, []);
 
+  const patchLine = (uid: string, patch: Partial<DraftLine>) =>
+    setLines((prev) => prev.map((l) => (l.uid === uid ? { ...l, ...patch } : l)));
+
+  const pickVariant = (uid: string) => (o: VariantOption | null) =>
+    setLines((prev) => prev.map((l) => {
+      if (l.uid !== uid) return l;
+      if (!o) return { ...l, variantId: null, label: '' };
+      // تعبئة التكلفة تلقائياً من تكلفة الفرع إذا كانت فارغة
+      const cost = l.unitCostAgora > 0 || o.costAgora === null ? l.unitCostAgora : o.costAgora;
+      return { ...l, variantId: o.variantId, label: o.label, unitCostAgora: cost };
+    }));
+
   const submit = async () => {
+    if (lines.some((l) => !l.variantId)) { showToast('اختر الصنف في كل سطر (بحث بالاسم أو SKU أو الباركود)', 'bad'); return; }
+    if (!lines.length) { showToast('أضف سطراً واحداً على الأقل', 'bad'); return; }
+    setSaving(true);
     try {
-      const variantIds = await Promise.all(lines.map(async (l) => {
-        const s = await api<SearchLike>(`/catalog/search?branchId=${(await api<any[]>('/org/branches'))[0].id}&q=${encodeURIComponent(l.variantName)}`);
-        const v = s.products[0]?.variants[0];
-        if (!v) throw new Error(`لا متغير: ${l.variantName}`);
-        return { variantId: v.id, qty: l.qty, unitCostAgora: l.unitCostAgora, lineDiscountAgora: l.lineDiscountAgora };
-      }));
       await api('/purchases', {
         method: 'POST',
-        body: { supplierId, refNo: refNo || undefined, discountAgora, taxRateBps: taxBps, lines: variantIds },
+        body: {
+          supplierId, refNo: refNo || undefined, discountAgora, taxRateBps: taxBps,
+          lines: lines.map((l) => ({ variantId: l.variantId!, qty: l.qty, unitCostAgora: l.unitCostAgora, lineDiscountAgora: l.lineDiscountAgora })),
+        },
       });
       showToast('أُنشئت فاتورة الشراء (طلبية)');
       onDone();
-    } catch (e) { showToast((e as Error).message, 'bad'); }
+    } catch (e) { showToast((e as Error).message, 'bad'); } finally { setSaving(false); }
   };
 
   return (
     <div>
-      {lines.length > 0 && <button className="btn" style={{ position: 'fixed', top: 80, insetInlineEnd: 30, zIndex: 60 }} onClick={submit}>حفظ فاتورة الشراء ({lines.length})</button>}
+      {lines.length > 0 && <button className="btn" style={{ position: 'fixed', top: 80, insetInlineEnd: 30, zIndex: 60 }} disabled={saving} onClick={submit}>{saving ? 'جارٍ الحفظ...' : `حفظ فاتورة الشراء (${lines.length})`}</button>}
       <div className="modal-backdrop" onClick={onClose}>
         <div className="modal" onClick={(e) => e.stopPropagation()}>
           <div className="modal-head"><h3>فاتورة شراء جديدة</h3><button className="btn secondary" onClick={onClose}>✕</button></div>
@@ -131,19 +159,22 @@ function NewPurchase({ onClose, onDone, showToast }: { onClose: () => void; onDo
               <Field label="خصم فاتورة (أغورات)"><input type="number" value={discountAgora} onChange={(e) => setDiscount(Number(e.target.value))} /></Field>
               <Field label="ضريبة (نقطة أساس)"><input type="number" value={taxBps} onChange={(e) => setTaxBps(Number(e.target.value))} /></Field>
             </div>
-            {lines.map((l, i) => (
-              <div className="row2" key={i}>
-                <input placeholder="اسم الصنف" value={l.variantName} onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, variantName: e.target.value } : x))} />
-                <input type="number" placeholder="كمية" value={l.qty} style={{ width: 80 }} onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x))} />
-                <input type="number" placeholder="تكلفة الوحدة" value={l.unitCostAgora} style={{ width: 110 }} onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, unitCostAgora: Number(e.target.value) } : x))} />
-                <input type="number" placeholder="خصم المنتج" value={l.lineDiscountAgora} style={{ width: 100 }} onChange={(e) => setLines(lines.map((x, j) => j === i ? { ...x, lineDiscountAgora: Number(e.target.value) } : x))} />
-                <button className="btn secondary small" onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕</button>
+            {lines.map((l) => (
+              <div className="row2 purchase-line" key={l.uid}>
+                <VariantPicker
+                  branchId={branchId}
+                  picked={l.variantId ? { variantId: l.variantId, label: l.label } : null}
+                  onPick={pickVariant(l.uid)}
+                />
+                <input type="number" placeholder="كمية" min={1} value={l.qty} style={{ width: 80 }} onChange={(e) => patchLine(l.uid, { qty: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} />
+                <input type="number" placeholder="تكلفة الوحدة (أغورات)" value={l.unitCostAgora} style={{ width: 130 }} onChange={(e) => patchLine(l.uid, { unitCostAgora: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
+                <input type="number" placeholder="خصم المنتج" value={l.lineDiscountAgora} style={{ width: 100 }} onChange={(e) => patchLine(l.uid, { lineDiscountAgora: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
+                <button className="btn secondary small" onClick={() => setLines((prev) => prev.filter((x) => x.uid !== l.uid))}>✕</button>
               </div>
             ))}
-            <button className="btn secondary" onClick={() => setLines([...lines, { variantName: '', qty: 1, unitCostAgora: 0, lineDiscountAgora: 0 }])}>+ سطر</button>
+            <button className="btn secondary" onClick={() => setLines((prev) => [...prev, newDraftLine()])}>+ سطر</button>
             <Field label="المدفوع عند الاستلام (أغورات)"><input type="number" value={payAgora} onChange={(e) => setPay(Number(e.target.value))} /></Field>
-            <p className="muted">الأسطر تُحل إلى متغيرات بالباركود عند الحفظ — دفع جزئي والباقي ذمة تلقائياً.</p>
-            <div className="muted">{variants.length} متغير متاح</div>
+            <p className="muted">ابحث عن الصنف بالاسم أو SKU أو امسح الباركود — يُضاف فوراً عند تطابق الباركود. دفع جزئي والباقي ذمة تلقائياً.</p>
           </div>
         </div>
       </div>
@@ -151,4 +182,102 @@ function NewPurchase({ onClose, onDone, showToast }: { onClose: () => void; onDo
   );
 }
 
-interface SearchLike { products: { variants: { id: string }[] }[] }
+interface SearchRes {
+  products: {
+    id: string; name: string; sku: string | null; imageUrl: string | null; thumbUrl: string | null;
+    variants: { id: string; name: string; barcode: string }[];
+    branchData: { cost: string }[];
+  }[];
+}
+
+/** خانة اختيار الصنف: بحث اسم / SKU / باركود مع قائمة نتائج — الباركود المطابق يُضاف فوراً (قارئ الباركود) */
+function VariantPicker({ branchId, picked, onPick }: {
+  branchId: string;
+  picked: { variantId: string; label: string } | null;
+  onPick: (o: VariantOption | null) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<VariantOption[]>([]);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const pickRef = useRef(onPick);
+  pickRef.current = onPick;
+
+  const choose = (o: VariantOption | null) => {
+    pickRef.current(o);
+    setQ('');
+    setOpen(false);
+    setResults([]);
+  };
+
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) { setResults([]); setOpen(false); return; }
+    let alive = true;
+    setBusy(true);
+    const t = window.setTimeout(async () => {
+      try {
+        const r = await api<SearchRes>(`/catalog/search?branchId=${branchId}&q=${encodeURIComponent(term)}`);
+        if (!alive) return;
+        const opts: VariantOption[] = r.products.flatMap((p) => p.variants.map((v) => ({
+          variantId: v.id,
+          label: p.variants.length > 1 ? `${p.name} — ${v.name}` : p.name,
+          barcode: v.barcode,
+          sku: p.sku,
+          imageUrl: p.imageUrl,
+          thumbUrl: p.thumbUrl,
+          costAgora: p.branchData[0] ? toAgora(p.branchData[0].cost) : null,
+        })));
+        setResults(opts);
+        setOpen(true);
+        // باركود مطابق تماماً → اختيار فوري بدون ضغط (مسح بالقارئ)
+        const exact = opts.find((o) => o.barcode && o.barcode === term);
+        if (exact) choose(exact);
+      } catch { if (alive) { setResults([]); setOpen(false); } } finally { if (alive) setBusy(false); }
+    }, 250);
+    return () => { alive = false; window.clearTimeout(t); };
+  }, [q, branchId]);
+
+  // إغلاق القائمة عند النقر خارجها
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  return (
+    <div className="item-search" ref={wrapRef}>
+      <input
+        placeholder={picked ? picked.label : 'اسم الصنف / SKU / باركود'}
+        value={picked ? picked.label : q}
+        title={picked ? picked.label : 'ابحث بالاسم أو SKU أو الباركود'}
+        onChange={(e) => { if (picked) onPick(null); setQ(e.target.value); }}
+        onFocus={() => { if (results.length > 0) setOpen(true); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && open && results[0]) { e.preventDefault(); choose(results[0]); }
+          if (e.key === 'Escape') setOpen(false);
+        }}
+        aria-label="البحث عن صنف"
+      />
+      {busy && <span className="item-search-busy">⏳</span>}
+      {open && (
+        <div className="search-results">
+          {results.map((o) => (
+            <button key={o.variantId} className="result-row" type="button" onClick={() => choose(o)}>
+              <span className="result-main">
+                {o.label}
+                <small className="mono">{o.barcode ?? ''}{o.sku ? ` · ${o.sku}` : ''}</small>
+              </span>
+              {o.costAgora !== null && <strong>{money(o.costAgora)}</strong>}
+            </button>
+          ))}
+          {results.length === 0 && <span className="result-row muted">لا نتائج مطابقة</span>}
+        </div>
+      )}
+    </div>
+  );
+}

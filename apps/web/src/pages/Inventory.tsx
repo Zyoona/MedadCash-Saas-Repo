@@ -32,13 +32,21 @@ export function Inventory() {
           <button className="btn" onClick={() => setCreating(true)}>+ صنف جديد</button>
         </div>
       </div>
-      <input placeholder="بحث..." value={q} onChange={(e) => setQ(e.target.value)} style={{ margin: '10px 0' }} />
+      <input placeholder="بحث اسم / SKU / باركود..." value={q} onChange={(e) => setQ(e.target.value)} style={{ margin: '10px 0' }} />
       <table className="grid">
         <thead>
           <tr><th>الصنف</th><th>الفئة</th><th>الباركود</th><th>السعر</th><th>التكلفة</th><th>الكمية</th><th>الحالة</th><th></th></tr>
         </thead>
         <tbody>
-          {rows.filter((r) => !q || r.name.includes(q) || (r.sku ?? '').includes(q)).map((r) => (
+          {rows.filter((r) => {
+            const term = q.trim().toLowerCase();
+            if (!term) return true;
+            return (
+              r.name.toLowerCase().includes(term)
+              || (r.sku ?? '').toLowerCase().includes(term)
+              || r.variants.some((v) => v.barcode.includes(term))
+            );
+          }).map((r) => (
             <tr key={r.id}>
               <td>
                 <span className="cell-with-img">
