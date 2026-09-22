@@ -36,8 +36,17 @@ node_modules/
 /build/
 /out/
 
+# Tooling caches / reports (tsc incremental, eslint cache, jest coverage)
+*.tsbuildinfo
+.eslintcache
+coverage/
+
 # Local tooling output — keep node binaries, ignore caches/logs/data.
-/_tools/npm-cache/
+# .npmrc sets `cache=./_tools/npm-cache`, which npm resolves per-cwd, so running
+# npm inside a workspace spawns apps/api/_tools/npm-cache and apps/web/_tools/npm-cache.
+# Unanchored on purpose: node_modules/ is fully ignored anyway, so matching at any
+# depth cannot strip anything tracked. (Root-only `/_tools/npm-cache/` missed them.)
+_tools/npm-cache/
 # The whole embedded Postgres cluster (data pages + WAL + pid + log) is
 # per-machine. Ignoring the folder — not just data/ — guarantees no DB file can
 # ever be staged or pushed, which is what caused cross-device merge conflicts.
@@ -49,4 +58,5 @@ node_modules/
 # OS / editor noise
 .DS_Store
 Thumbs.db
+Desktop.ini
 *.log

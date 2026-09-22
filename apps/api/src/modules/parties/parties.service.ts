@@ -114,13 +114,25 @@ export class PartiesService {
     });
   }
 
-  /** تحصيل من عميل (§4): Dr صندوق/بنك Cr ذمم العميل. */
+  /**
+   * تحصيل من عميل (§4): Dr صندوق/بنك Cr ذمم العميل.
+   * حساب القبض يجب أن يكون حساب أصول غير مغلق.
+   * الدفع الزائد مسموح عمداً: الفائض يبقى رصيداً دائناً (مستحقاً) للعميل مع تحذير لا يمنع العملية.
+   */
   async collectFromCustomer(tenantId: string, branchId: string, input: { customerId: string; accountCode: string; amountAgora: number; date?: string; memo?: string }, actorId: string) {
     if (!Number.isInteger(input.amountAgora) || input.amountAgora <= 0) throw new BadRequestException('مبلغ غير صالح');
     const c = await this.prisma.customer.findFirst({ where: { id: input.customerId, tenantId, deletedAt: null } });
     if (!c) throw new NotFoundException('العميل غير موجود');
+    const payAccount = await this.prisma.account.findFirst({
+      where: { tenantId, code: input.accountCode, deletedAt: null },
+      select: { id: true, type: true, isClosed: true },
+    });
+    if (!payAccount) throw new NotFoundException(`حساب القبض غير موجود: ${input.accountCode}`);
+    if (payAccount.isClosed) throw new ConflictException('حساب القبض مغلق');
+    if (payAccount.type !== 'asset') throw new BadRequestException('حساب القبض يجب أن يكون حساب أصول (صندوق أو بنك)');
     const date = input.date ? new Date(input.date) : new Date();
     const fy = await fiscalYearFor(this.prisma, tenantId, date);
+    const balanceBeforeAgora = await this.customerBalance(tenantId, c.id);
     return this.prisma.$transaction(async (db: Db) => {
       const entryId = await this.ledger.post({
         tenantId, branchId, fiscalYearId: fy.id, date,
@@ -131,10 +143,100 @@ export class PartiesService {
           { accountCode: AR, debitAgora: 0, creditAgora: input.amountAgora, customerId: c.id },
         ],
       }, db);
-      await auditTx(db, { tenantId, actorId, branchId, action: 'collection', entity: 'customers', entityId: c.id, diff: { ...input, entryId } });
-      await syncOpTx(db, { tenantId, branchId, entity: 'collection', entityId: entryId, op: 'create', payload: { customerId: c.id, amountAgora: input.amountAgora, accountCode: input.accountCode } });
-      return { entryId };
+      const balanceAfterAgora = balanceBeforeAgora - input.amountAgora;
+      const overpaidAgora = Math.max(0, input.amountAgora - Math.max(0, balanceBeforeAgora));
+      const creditBalanceAgora = Math.max(0, -balanceAfterAgora);
+      const warning = overpaidAgora > 0
+        ? `دُفعت ${(overpaidAgora / 100).toFixed(2)} ₪ زائداً عن الدين — أصبح للعميل رصيداً مستحقاً له. لا بأس بذلك.`
+        : null;
+      await auditTx(db, { tenantId, actorId, branchId, action: 'collection', entity: 'customers', entityId: c.id, diff: { ...input, entryId, balanceBeforeAgora, balanceAfterAgora, overpaidAgora, warning } });
+      await syncOpTx(db, { tenantId, branchId, entity: 'collection', entityId: entryId, op: 'create', payload: { customerId: c.id, amountAgora: input.amountAgora, accountCode: input.accountCode, overpaidAgora } });
+      return { entryId, balanceBeforeAgora, balanceAfterAgora, overpaidAgora, creditBalanceAgora, warning };
     });
+  }
+
+  /** كشف حساب العميل: كل سطور الذمم (1300) الموسومة به، مرتبة زمنياً مع رصيد جارٍ. */
+  async customerStatement(tenantId: string, customerId: string) {
+    const c = await this.prisma.customer.findFirst({ where: { id: customerId, tenantId, deletedAt: null }, select: { id: true, name: true } });
+    if (!c) throw new NotFoundException('العميل غير موجود');
+    const lines = await this.prisma.journalLine.findMany({
+      where: { entry: { tenantId }, account: { code: AR }, customerId },
+      select: {
+        debit: true, credit: true, memo: true,
+        entry: { select: { id: true, date: true, createdAt: true, sourceType: true, sourceId: true, memo: true } },
+      },
+    });
+    const sorted = [...lines].sort((a, b) =>
+      new Date(a.entry.date).getTime() - new Date(b.entry.date).getTime() ||
+      new Date(a.entry.createdAt).getTime() - new Date(b.entry.createdAt).getTime(),
+    );
+    let run = 0;
+    const rows = sorted.map((l) => {
+      const debitAgora = decToAgora(l.debit);
+      const creditAgora = decToAgora(l.credit);
+      run += debitAgora - creditAgora;
+      return {
+        entryId: l.entry.id,
+        date: l.entry.date,
+        sourceType: l.entry.sourceType,
+        sourceId: l.entry.sourceId,
+        memo: l.memo ?? l.entry.memo ?? null,
+        debitAgora,
+        creditAgora,
+        balanceAgora: run,
+      };
+    });
+    return { customer: c, balanceAgora: run, rows };
+  }
+
+  /** أعمار الديون: توزيع رصيد كل عميل مدين على فواتيره المرحّلة (الأقدم أولاً — FIFO) في فئات عمر. */
+  async customersAging(tenantId: string) {
+    const customers = await this.prisma.customer.findMany({
+      where: { tenantId, deletedAt: null },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    });
+    const balances = await this.balancesByParty(tenantId, AR, 'customerId');
+    const debtors = customers.map((c) => ({ ...c, debtAgora: balances.get(c.id) ?? 0 })).filter((c) => c.debtAgora > 0);
+    if (debtors.length === 0) return { rows: [], totalDebtAgora: 0 };
+    const invoices = await this.prisma.invoice.findMany({
+      where: { tenantId, deletedAt: null, status: 'posted', customerId: { in: debtors.map((d) => d.id) } },
+      select: { id: true, customerId: true, createdAt: true, lines: { select: { netAgora: true } } },
+    });
+    const byCustomer = new Map<string, { date: number; total: number }[]>();
+    for (const inv of invoices) {
+      const total = inv.lines.reduce((s, l) => s + Number(l.netAgora), 0);
+      if (total <= 0) continue;
+      const list = byCustomer.get(inv.customerId) ?? [];
+      list.push({ date: inv.createdAt.getTime(), total });
+      byCustomer.set(inv.customerId, list);
+    }
+    const DAY = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const rows = debtors.map((c) => {
+      let remaining = c.debtAgora;
+      let b0_30 = 0, b31_60 = 0, b61_90 = 0, b90plus = 0;
+      let oldestDays: number | null = null;
+      for (const inv of (byCustomer.get(c.id) ?? []).sort((a, b) => a.date - b.date)) {
+        if (remaining <= 0) break;
+        const alloc = Math.min(remaining, inv.total);
+        const days = Math.floor((now - inv.date) / DAY);
+        if (days < 31) b0_30 += alloc;
+        else if (days < 61) b31_60 += alloc;
+        else if (days < 91) b61_90 += alloc;
+        else b90plus += alloc;
+        if (oldestDays === null) oldestDays = days;
+        remaining -= alloc;
+      }
+      // ديون بلا فواتير مرحّلة تغطيها (رصيد افتتاحي أو فواتير لاحقة لأرشفتها) تُحمَّل على الفئة الأقدم.
+      if (remaining > 0) b90plus += remaining;
+      return {
+        customerId: c.id, name: c.name, debtAgora: c.debtAgora,
+        b0_30Agora: b0_30, b31_60Agora: b31_60, b61_90Agora: b61_90, b90plusAgora: b90plus,
+        oldestInvoiceDays: oldestDays,
+      };
+    });
+    return { rows, totalDebtAgora: rows.reduce((s, r) => s + r.debtAgora, 0) };
   }
 
   // ─── Suppliers (tenant-level §3) ───

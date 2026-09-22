@@ -107,6 +107,9 @@ export function Money({ agora, className }: { agora: number | null | undefined; 
   return <span className={className}>{agora === null || agora === undefined ? '—' : money(agora)}</span>;
 }
 
+/** اسم المتغير الافتراضي عند إدخال باركود لصنف بسيط (بلا متغيرات) — يُخفى في العرض والطباعة. */
+export const DEFAULT_VARIANT = 'افتراضي';
+
 /** خانتا مبلغ: شيكل + أغورات — تُعرض القيمة كما يقرأها المستخدم (17 . 50 = 17.50 ₪) بدل 1750 أغورة.
  *  allowNegative: لصفوف الدفعات حيث السالب = إرجاع باقي بطريقة مختلفة (§4 صف 8). */
 export function SplitAgora({ agora, onAgora, disabled, label, allowNegative }: { agora: number; onAgora: (agora: number) => void; disabled?: boolean; label?: string; allowNegative?: boolean }) {
@@ -122,20 +125,25 @@ export function SplitAgora({ agora, onAgora, disabled, label, allowNegative }: {
     else onAgora(Math.max(0, s) * AGORA_PER_SHEKEL + c);
   };
   return (
-    <span className="split-agora">
+    <span className={`split-agora${cents === 0 ? ' is-zero' : ''}`}>
+      <span className="split-cur" aria-hidden="true">₪</span>
       <input
+        className="split-shekels"
         type="number" min={allowNegative ? undefined : 0} inputMode="numeric" disabled={disabled} value={shekels}
         aria-label={label ? `${label} — شيكل` : 'شيكل'}
+        onFocus={(e) => e.currentTarget.select()}
         onChange={(e) => emit(Math.trunc(Number(e.target.value) || 0), cents)}
       />
       <span className="split-dot" aria-hidden="true">.</span>
       <input
+        className="split-cents"
         type="number" min={0} max={AGORA_PER_SHEKEL - 1} inputMode="numeric" disabled={disabled}
         value={String(cents).padStart(2, '0')}
-        aria-label={label ? `${label} — أغورات` : 'أغورات'}
+        title="أغورات — اختياري"
+        aria-label={label ? `${label} — أغورات (اختياري)` : 'أغورات (اختياري)'}
+        onFocus={(e) => e.currentTarget.select()}
         onChange={(e) => emit(shekels, Math.trunc(Number(e.target.value) || 0))}
       />
-      <span className="split-cur" aria-hidden="true">₪</span>
     </span>
   );
 }

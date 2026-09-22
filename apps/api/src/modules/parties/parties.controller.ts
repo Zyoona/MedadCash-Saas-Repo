@@ -30,6 +30,18 @@ export class PartiesController {
     return this.parties.collectFromCustomer(u.tenantId, b.branchId ?? u.branchId ?? '', { customerId: id, accountCode: b.accountCode, amountAgora: b.amountAgora, date: b.date, memo: b.memo }, u.userId);
   }
 
+  @Get('customers/:id/statement')
+  @RequirePerm('parties.view')
+  statement(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    return this.parties.customerStatement(u.tenantId, id);
+  }
+
+  @Get('aging')
+  @RequirePerm('parties.view')
+  aging(@CurrentUser() u: AuthUser) {
+    return this.parties.customersAging(u.tenantId);
+  }
+
   @Get('suppliers')
   @RequirePerm('parties.view')
   suppliers(@CurrentUser() u: AuthUser) {

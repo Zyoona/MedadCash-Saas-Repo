@@ -539,38 +539,65 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
 .pos-scroll table.grid { margin-top: 0; }
 .pos-scroll thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
 .pos-scroll table.grid th, .pos-scroll table.grid td { padding: 6px 8px; }
-.pos-scroll table.grid input { height: 34px; padding: 4px 8px; }
+.pos-scroll table.grid input:not(.split-cents) { height: 34px; padding: 4px 8px; }
 .pos-pay-head { display: flex; align-items: center; gap: 8px; flex: none; }
 .pos-pay-head select { flex: 1; min-width: 0; height: 38px; }
 .pos-pay .pos-discounts { margin: 6px 0; }
 .pos-pay .pos-discounts .field { flex: 1; min-width: 0; }
-.pos-pay .pos-discounts .field input { min-width: 0; width: 100%; height: 36px; padding: 6px 8px; }
+.pos-pay .pos-discounts .field input:not(.split-cents) { min-width: 0; width: 100%; height: 36px; padding: 6px 8px; }
 .pos-pay .totals { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; padding: 8px 10px; border: 1px dashed var(--border); border-radius: var(--radius); flex: none; }
 .pos-pay .totals div { display: flex; justify-content: space-between; font-size: 13px; }
 .pos-pay .totals .grand { font-size: 17px; font-weight: 800; color: var(--accent); }
 .pos-pays { flex: 1; min-height: 0; overflow: auto; }
 .pay-row { display: flex; gap: 6px; margin: 4px 0; }
 .pay-row select { flex: 1; min-width: 0; height: 36px; padding: 4px 8px; }
-.pay-row input { width: 110px; height: 36px; padding: 4px 8px; }
+.pay-row input:not(.split-cents) { width: 110px; height: 36px; padding: 4px 8px; }
 .pos-pay-actions { margin: 6px 0 0; }
 .pos-pay-actions .btn { flex: 1; height: 36px; padding: 6px 10px; }
 .pos-pay .btn.wide { margin-top: auto; height: 42px; }
 .pos-alt { flex: 1; min-height: 0; overflow: auto; }
 
-/* خانتا مبلغ: شيكل + أغورات — بدل إدخال الأغورات الخام (17.50 ₪ بدل 1750) */
-.split-agora { display: inline-flex; align-items: center; gap: 3px; direction: ltr; white-space: nowrap; }
-.split-agora input { width: 66px; height: 36px; padding: 4px 4px; text-align: center; font-variant-numeric: tabular-nums; min-width: 0; }
-.split-agora .split-cents { width: 48px; }
-.split-agora .split-dot { color: var(--muted); font-weight: 700; }
-.split-agora .split-cur { color: var(--muted); font-size: 12px; flex: none; }
-.pos-scroll .split-agora input { height: 34px; width: 60px; }
-.pos-scroll .split-agora .split-cents { width: 44px; }
+/* مبلغ: الشيكل هو الخانة الأساسية، الأغورات خانة عشرية هادئة اختيارية */
+.split-agora { display: inline-flex; align-items: center; gap: 0; direction: ltr; white-space: nowrap; }
+.split-agora input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
+.split-agora input[type='number']::-webkit-outer-spin-button,
+.split-agora input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.field .split-agora { width: 100%; }
+.field .split-agora input { min-width: 0; }
+.field .split-agora .split-shekels { flex: 1; width: auto; }
+.split-agora .split-shekels {
+  width: 72px; height: 36px; padding: 4px 6px; min-width: 0;
+  text-align: end; font-variant-numeric: tabular-nums;
+  font-size: 15px; font-weight: 700; letter-spacing: -0.02em;
+}
+.split-agora .split-cents {
+  width: 26px; height: 26px; padding: 0 1px; margin-inline-start: 1px;
+  text-align: center; font-variant-numeric: tabular-nums;
+  font-size: 11px; font-weight: 500; line-height: 1;
+  color: var(--muted); background: transparent; border-color: transparent;
+  border-radius: 6px; opacity: 0.42; flex: none;
+  transition: opacity 120ms ease, color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+.split-agora.is-zero .split-cents { opacity: 0.28; }
+.split-agora .split-cents:hover { opacity: 0.7; border-color: var(--border); }
+.split-agora .split-cents:focus {
+  opacity: 1; color: var(--text); background: var(--surface);
+  border-color: var(--control-border); outline: none;
+}
+.split-agora .split-cents:disabled { opacity: 0.22; }
+.split-agora .split-dot {
+  color: var(--muted); font-weight: 400; font-size: 13px;
+  opacity: 0.35; padding: 0 1px; user-select: none; pointer-events: none;
+}
+.split-agora .split-cur { color: var(--muted); font-size: 12px; flex: none; opacity: 0.7; margin-inline-end: 4px; font-weight: 600; }
+.pos-scroll .split-agora .split-shekels { height: 34px; width: 56px; font-size: 14px; }
+.pos-scroll .split-agora .split-cents { width: 22px; height: 22px; font-size: 10px; }
 .pay-row .split-agora { flex: 1; min-width: 0; }
-.pay-row .split-agora input { flex: 1; width: auto; height: 36px; }
+.pay-row .split-agora .split-shekels { flex: 1; width: auto; height: 36px; }
 .pos-discounts .split-agora { width: 100%; }
-.pos-discounts .split-agora input { flex: 1; width: auto; }
-.shift-banner .split-agora input { width: 52px; height: 32px; padding: 4px 2px; }
-.shift-banner .split-agora .split-cents { width: 40px; }
+.pos-discounts .split-agora .split-shekels { flex: 1; width: auto; }
+.shift-banner .split-agora .split-shekels { width: 56px; height: 32px; padding: 4px 4px; font-size: 13px; }
+.shift-banner .split-agora .split-cents { width: 22px; height: 22px; }
 .shift-amount { display: inline-flex; align-items: center; gap: 6px; }
 .shift-caption { color: var(--muted); }
 .shift-blocked { color: var(--danger); font-weight: 700; }
@@ -728,6 +755,13 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
 .purchase-totals .grand span:first-child { color: var(--text); }
 
 .np-form { display: flex; flex-direction: column; gap: 14px; }
+/* خانة الباركود الأولى في نموذج الصنف الجديد — بارزة لالتقاط مسح الجهاز مباشرة */
+.np-barcode .field input {
+  width: 100%; height: 46px; font-size: 15px; letter-spacing: 0.5px;
+  border-color: var(--accent); box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.10);
+}
+.np-created { display: flex; flex-direction: column; gap: 8px; }
+.np-created-msg { font-weight: 700; margin: 0; }
 .np-photo {
   display: flex; align-items: center; gap: 14px;
   padding: 12px; background: var(--surface);
@@ -743,15 +777,20 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
   display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px;
 }
 .np-grid .field { min-width: 0; }
-.np-grid .field input, .np-grid .field select { width: 100%; min-width: 0; height: 42px; }
+.np-grid .field input:not(.split-cents), .np-grid .field select { width: 100%; min-width: 0; height: 42px; }
 .np-span-2 { grid-column: 1 / -1; }
 .np-form .split-agora {
-  width: 100%; height: 42px; padding: 0 10px;
+  width: 100%; height: 42px; padding: 0 8px 0 10px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
 }
-.np-form .split-agora input {
+.np-form .split-agora .split-shekels {
   border: 0; background: transparent; height: 40px; flex: 1; width: auto; min-width: 0;
+  font-size: 18px; font-weight: 700;
 }
+.np-form .split-agora .split-cents {
+  border: 0; background: transparent; height: 24px; flex: none;
+}
+.purchase-line .split-agora .split-shekels { width: 64px; height: 36px; }
 .np-actions {
   display: flex; justify-content: flex-end; gap: 8px;
   padding-top: 12px; border-top: 1px solid var(--border);

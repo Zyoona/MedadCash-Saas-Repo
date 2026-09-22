@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, auditEvent, money } from '../api.js';
 import { computeInvoice } from '@medad/shared-types';
-import { Badge, Field, Money, ProductImage, SplitAgora, Tabs, useToast } from '../ui.js';
+import { Badge, DEFAULT_VARIANT, Field, Money, ProductImage, SplitAgora, Tabs, useToast } from '../ui.js';
 import { useAuth } from '../auth.js';
 import { bankLabel, CASH_CODE, PAY_METHODS, useBanks, usePaySources } from '../banks.js';
 
@@ -275,12 +275,15 @@ export function Pos() {
                     <div className="search-results">
                       {results.products.map((p) => {
                         const price = Math.round(Number(p.branchData[0]?.price ?? 0) * 100);
-                        return p.variants.length > 0 ? p.variants.map((v) => (
-                          <button key={v.id} className="result-row" onClick={() => { addToCart(p.id, v.id, `${p.name} (${v.name})`, p.imageUrl, p.thumbUrl, price); setResults(null); setQ(''); }}>
-                            <span className="result-main"><ProductImage src={p.imageUrl} thumb={p.thumbUrl} alt={p.name} size={32} />{p.name} — {v.name} <small>{v.barcode}</small></span>
+                        return p.variants.length > 0 ? p.variants.map((v) => {
+                          const vName = v.name === DEFAULT_VARIANT ? '' : v.name;
+                          return (
+                          <button key={v.id} className="result-row" onClick={() => { addToCart(p.id, v.id, vName ? `${p.name} (${vName})` : p.name, p.imageUrl, p.thumbUrl, price); setResults(null); setQ(''); }}>
+                            <span className="result-main"><ProductImage src={p.imageUrl} thumb={p.thumbUrl} alt={p.name} size={32} />{p.name}{vName ? ` — ${vName}` : ''} <small>{v.barcode}</small></span>
                             <strong>{money(price)}</strong>
                           </button>
-                        )) : (
+                          );
+                        }) : (
                           <button key={p.id} className="result-row" disabled={p.branchData.length === 0} onClick={() => { addToCart(p.id, null, p.name, p.imageUrl, p.thumbUrl, price); setResults(null); setQ(''); }}>
                             <span className="result-main"><ProductImage src={p.imageUrl} thumb={p.thumbUrl} alt={p.name} size={32} />{p.name}</span>
                             <strong>{money(price)}</strong>
@@ -293,7 +296,7 @@ export function Pos() {
               </div>
               <div className="pos-scroll">
                 <table className="grid">
-                  <thead><tr><th>الصنف</th><th>كمية</th><th>سعر (شيكل . أغورات)</th><th>خصم المنتج</th><th>إجمالي</th><th></th></tr></thead>
+                  <thead><tr><th>الصنف</th><th>كمية</th><th>السعر</th><th>خصم المنتج</th><th>إجمالي</th><th></th></tr></thead>
                   <tbody>
                     {active.cart.map((l, i) => (
                       <tr key={i}>

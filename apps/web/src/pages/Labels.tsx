@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { code128Svg } from '../barcode.js';
 import { auditEvent, money } from '../api.js';
-import { Field, useToast } from '../ui.js';
+import { Field, DEFAULT_VARIANT, useToast } from '../ui.js';
 
 // الملصقات: بحث تراكمي + تحديد (فردي/الكل) + سعر مشطوب لكل عنصر + خيارات إظهار + اسم مكتبة + طباعة.
 
@@ -19,6 +19,9 @@ const SIZES = {
   'A4 (24 شبكة)': { w: 300, h: 180, scale: 0.35 },
 };
 
+// وجهة الطباعة: ورق عادي (نافذة الطباعة العادية) أو طابعة ملصقات حرارية (صفحة بمقاس الملصق، ملصق لكل صفحة).
+type PrinterMode = 'sheet' | 'thermal';
+
 export function Labels() {
   const [q, setQ] = useState('');
   const [items, setItems] = useState<Row[]>([]);
@@ -27,6 +30,7 @@ export function Labels() {
   const [qty, setQty] = useState<Record<string, number>>({});
   const [oldPrice, setOldPrice] = useState<Record<string, number>>({});
   const [size, setSize] = useState<keyof typeof SIZES>('40×30');
+  const [printer, setPrinter] = useState<PrinterMode>(() => (localStorage.getItem('medad_labels_printer') === 'thermal' ? 'thermal' : 'sheet'));
   const [libraryName, setLibraryName] = useState(() => localStorage.getItem('medad_labels_library') ?? '');
   // عناصر الملصق القابلة للإظهار/الإخفاء (الباركود نفسه دائماً ظاهر)
   const [show, setShow] = useState({ name: true, variant: true, brand: true, library: false, price: true, old: true, code: true });
@@ -35,6 +39,27 @@ export function Labels() {
 
   useEffect(() => { auditEvent('view', 'labels'); }, []);
   useEffect(() => {
+    // صنف أُنشئ حديثاً من صفحة المخزون → يُضاف جاهزاً للطباعة (محدد، عدد 1).
+    const raw = sessionStorage.getItem('medad_labels_seed');
+    if (raw) {
+      sessionStorage.removeItem('medad_labels_seed');
+      try {
+        const rows: Row[] = JSON.parse(raw);
+        if (Array.isArray(rows) && rows.length > 0) {
+          setItems((prev) => {
+            const seen = new Set(prev.map((p) => p.key));
+            return [...prev, ...rows.filter((r) => r?.key && !seen.has(r.key))];
+          });
+          setChecked((prev) => {
+            const next = { ...prev };
+            for (const r of rows) if (r?.key) next[r.key] = true;
+            return next;
+          });
+        }
+      } catch { /* بذرة غير صالحة — تُتجاهل */ }
+    }
+  }, []);
+  useEffect(() => {
     api<any[]>('/org/branches').then((bs) => setBranchId(bs[0]?.id ?? '')).catch(() => undefined);
     api<{ name?: string }>('/org/tenant').then((t) => {
       if (t?.name && !localStorage.getItem('medad_labels_library')) setLibraryName(t.name);
@@ -42,6 +67,13 @@ export function Labels() {
   }, []);
 
   useEffect(() => { localStorage.setItem('medad_labels_library', libraryName); }, [libraryName]);
+  useEffect(() => { localStorage.setItem('medad_labels_printer', printer); }, [printer]);
+
+  const changePrinter = (m: PrinterMode) => {
+    setPrinter(m);
+    // مقاس شبكة A4 خاص بالورق العادي — عند التحويل لطابعة الملصقات نرتّج لمقاس ملصق حقيقي.
+    if (m === 'thermal' && size === 'A4 (24 شبكة)') setSize('40×30');
+  };
 
   const search = (term: string) => {
     setQ(term);
@@ -54,7 +86,7 @@ export function Labels() {
         const r = await api<Found>(`/ops/labels/products?branchId=${bid}&q=${encodeURIComponent(term.trim())}`);
         const rows: Row[] = r.products.flatMap((p) => p.variants.map((v) => ({
           key: v.barcode,
-          name: p.name, barcode: v.barcode, variant: v.name,
+          name: p.name, barcode: v.barcode, variant: v.name === DEFAULT_VARIANT ? '' : v.name,
           priceAgora: Math.round(Number(p.branchData[0]?.price ?? 0) * 100),
           brand: p.brand?.name ?? '',
         })));
@@ -90,6 +122,56 @@ export function Labels() {
 
   const cfg = SIZES[size];
 
+  // طباعة حرارية: نستنسخ معاينة الملصقات إلى إطار مخفي بمستند مستقل حجم صفحته = مقاس الملصق بالمليمتر
+  // (40×30 → 40mm×30mm)، وملصق واحد لكل صفحة (page-break) — مع color-adjust حتى تخرج خطوط الباركود صلبة.
+  const printThermal = () => {
+    const wmm = cfg.w / 10;
+    const hmm = cfg.h / 10;
+    const nodes = Array.from(document.querySelectorAll<HTMLDivElement>('#labels-print-area .label-card'));
+    if (nodes.length === 0) return;
+    const cards = nodes.map((n) => n.outerHTML).join('\n');
+    const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>ملصقات ${wmm}×${hmm}</title><style>
+@page { size: ${wmm}mm ${hmm}mm; margin: 0; }
+html, body { margin: 0; padding: 0; background: #fff; }
+body { -webkit-print-color-adjust: exact; print-color-adjust: exact; font-family: 'Segoe UI', Tahoma, Arial, sans-serif; }
+.label-card {
+  box-sizing: border-box; width: ${wmm}mm !important; height: ${hmm}mm !important; padding: 1mm 1.2mm;
+  overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.2mm; background: #fff; color: #000; text-align: center;
+  page-break-after: always; break-after: page;
+}
+.label-card:last-child { page-break-after: auto; break-after: auto; }
+.label-library { font-weight: 800; font-size: 2.6mm; line-height: 1.15; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.label-name { font-weight: 700; font-size: 2.3mm; line-height: 1.2; text-align: center; max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.label-brand { font-size: 2mm; color: #222; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.label-old { text-decoration: line-through; font-size: 2.1mm; color: #333; line-height: 1.15; }
+.label-price { font-weight: 800; font-size: 3mm; line-height: 1.15; }
+.label-bars { width: 100%; max-width: 100%; overflow: hidden; display: flex; justify-content: center; }
+.label-bars svg { display: block; width: 100%; max-width: 100%; height: auto; max-height: ${(hmm * 0.3).toFixed(1)}mm; }
+.label-code { font-size: 2mm; color: #000; letter-spacing: 0.3mm; direction: ltr; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style></head><body>${cards}</body></html>`;
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;opacity:0;border:0;';
+    document.body.appendChild(frame);
+    const win = frame.contentWindow;
+    if (!win) { frame.remove(); return; }
+    const doc = win.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
+    window.setTimeout(() => {
+      try { win.focus(); win.print(); } finally { window.setTimeout(() => frame.remove(), 2000); }
+    }, 150);
+  };
+
+  const doPrint = () => {
+    if (labels.length === 0) return;
+    void auditEvent('print', 'labels');
+    if (printer === 'thermal') printThermal();
+    else window.print();
+  };
+
   const toggle = (k: keyof typeof show, label: string) => (
     <label className="switch" key={k}>
       <input type="checkbox" checked={show[k]} onChange={(e) => setShow({ ...show, [k]: e.target.checked })} />
@@ -107,14 +189,27 @@ export function Labels() {
         <button className="btn secondary" onClick={clearResults}>مسح النتائج</button>
         <Field label="الحجم">
           <select value={size} onChange={(e) => setSize(e.target.value as never)}>
-            {Object.keys(SIZES).map((k) => <option key={k} value={k}>{k}</option>)}
+            {Object.keys(SIZES).filter((k) => printer === 'sheet' || k !== 'A4 (24 شبكة)').map((k) => <option key={k} value={k}>{k}</option>)}
+          </select>
+        </Field>
+        <Field label="الطابعة">
+          <select value={printer} onChange={(e) => changePrinter(e.target.value as PrinterMode)}>
+            <option value="sheet">ورق عادي (A4)</option>
+            <option value="thermal">طابعة ملصقات (حرارية)</option>
           </select>
         </Field>
         <Field label="اسم المكتبة (يُطبع في الملصق)">
           <input placeholder="مثال: مكتبة مداد" value={libraryName} onChange={(e) => setLibraryName(e.target.value)} style={{ width: 180 }} />
         </Field>
-        <button className="btn" onClick={() => window.print()} disabled={labels.length === 0}>طباعة ({labels.length})</button>
+        <button className="btn" onClick={doPrint} disabled={labels.length === 0}>طباعة ({labels.length})</button>
       </div>
+
+      {printer === 'thermal' && (
+        <p className="muted no-print">
+          عند الطباعة اختر طابعة الملصقات في نافذة الطباعة، وتأكد أن مقاس الورق في إعدادات الطابعة يطابق مقاس الملصق
+          ({cfg.w / 10}×{cfg.h / 10} مم)، والتكبير 100%، وإلغاء الترويسة والتذييل. كل ملصق يُطبع في صفحة مستقلة.
+        </p>
+      )}
 
       <fieldset className="no-print labels-opts">
         <legend>عناصر الملصق</legend>

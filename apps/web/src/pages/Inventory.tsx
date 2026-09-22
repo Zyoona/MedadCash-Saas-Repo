@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api, money } from '../api.js';
-import { Badge, Field, FieldHint, Modal, ProductImage, readImageFile, SplitAgora, useToast } from '../ui.js';
+import { useAuth } from '../auth.js';
+import { Badge, DEFAULT_VARIANT, Field, FieldHint, Modal, ProductImage, readImageFile, SplitAgora, useToast } from '../ui.js';
 import { PageLoader } from '../Loader.js';
 
 interface StockRow {
@@ -76,10 +78,14 @@ export function Inventory() {
 }
 
 function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; onDone: () => void; showToast: (m: string, t?: 'ok' | 'bad') => void }) {
-  const [form, setForm] = useState({ name: '', sku: '', categoryId: '', brandId: '', lowStockDefault: 5, priceAgora: 0, costAgora: 0, variants: '' });
+  const navigate = useNavigate();
+  const { can } = useAuth();
+  const [form, setForm] = useState({ barcode: '', name: '', sku: '', categoryId: '', brandId: '', lowStockDefault: 5, priceAgora: 0, costAgora: 0, variants: '' });
+  const [created, setCreated] = useState<any>(null);
   const [taxonomy, setTaxonomy] = useState<{ categories: any[]; brands: any[]; units: any[]; branches: any[] }>({ categories: [], brands: [], units: [], branches: [] });
   const [baseUnitId, setBaseUnitId] = useState('');
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     Promise.all([
@@ -103,29 +109,90 @@ function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; 
     if (!form.name.trim()) { showToast('أدخل اسم الصنف', 'bad'); return; }
     try {
       const branch = taxonomy.branches[0];
-      const created = await api<any>('/catalog/products', {
+      // الباركود الممسوح: يُخصَّص لأول متغير، أو يُنشأ متغير افتراضي للصنف البسيط.
+      // إن تُرك فارغاً يولّد الخادم باركوداً تلقائياً.
+      const barcode = form.barcode.trim();
+      const variantNames = form.variants.split('،').map((v) => v.trim()).filter(Boolean);
+      const variants: { name: string; barcode?: string }[] = variantNames.length
+        ? variantNames.map((name, i) => (i === 0 && barcode ? { name, barcode } : { name }))
+        : barcode
+          ? [{ name: DEFAULT_VARIANT, barcode }]
+          : [];
+      const res = await api<any>('/catalog/products', {
         method: 'POST',
         body: {
           name: form.name.trim(), sku: form.sku || undefined,
           categoryId: form.categoryId || null, brandId: form.brandId || null,
           baseUnitId: baseUnitId || null, lowStockDefault: form.lowStockDefault,
-          variants: form.variants.split('،').map((v) => v.trim()).filter(Boolean).map((name) => ({ name })),
+          variants,
           branches: branch ? [{ branchId: branch.id, priceAgora: form.priceAgora, costAgora: form.costAgora }] : [],
         },
       });
       let imgErr = '';
-      if (imageDataUrl && created?.id) {
-        try { await api(`/catalog/products/${created.id}/image`, { method: 'POST', body: { dataUrl: imageDataUrl } }); }
+      if (imageDataUrl && res?.id) {
+        try { await api(`/catalog/products/${res.id}/image`, { method: 'POST', body: { dataUrl: imageDataUrl } }); }
         catch (e) { imgErr = (e as Error).message; }
       }
       showToast(imgErr ? `أُنشئ الصنف لكن فشل رفع الصورة: ${imgErr}` : 'أُنشئ الصنف', imgErr ? 'bad' : 'ok');
-      onDone();
+      setCreated(res);
     } catch (e) { showToast((e as Error).message, 'bad'); }
   };
+
+  const addAnother = () => {
+    setCreated(null);
+    setImageDataUrl(null);
+    setForm((f) => ({ ...f, barcode: '', name: '', sku: '', variants: '', priceAgora: 0, costAgora: 0 }));
+  };
+
+  const printLabels = () => {
+    const vs: any[] = created?.variants ?? [];
+    const rows = vs.map((v) => ({
+      key: v.barcode,
+      name: created.name,
+      barcode: v.barcode,
+      variant: v.name === DEFAULT_VARIANT ? '' : v.name,
+      priceAgora: Math.round(Number(created.branchData?.[0]?.priceAgora ?? 0)),
+      brand: created.brand?.name ?? '',
+    }));
+    sessionStorage.setItem('medad_labels_seed', JSON.stringify(rows));
+    navigate('/labels');
+  };
+
+  if (created) {
+    const bars: string[] = (created.variants ?? []).map((v: any) => v.barcode);
+    return (
+      <Modal title="أُنشئ الصنف" onClose={onDone}>
+        <div className="np-created">
+          <p className="np-created-msg">تم إنشاء الصنف «{created.name}» بنجاح.</p>
+          <p className="muted">الباركود: <span className="mono" dir="ltr">{bars.length ? bars.join(' ، ') : '—'}</span></p>
+          <div className="np-actions">
+            <button type="button" className="btn secondary" onClick={onDone}>إغلاق</button>
+            <button type="button" className="btn secondary" onClick={addAnother}>صنف جديد آخر</button>
+            {can('labels.print') && bars.length > 0 && (
+              <button type="button" className="btn" onClick={printLabels}>طباعة الملصقات</button>
+            )}
+          </div>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal title="صنف جديد" onClose={onClose}>
       <div className="np-form">
+        <div className="np-barcode">
+          <Field label="الباركود" hint="الخانة الأولى: امسح باركود المنتج الأصلي بجهاز الباركود وسيُعبَّأ تلقائياً. للأصناف بلا باركود اتركه فارغاً ليُولَّد باركود داخلي. عند إدخال المتغيرات يُخصَّص الباركود لأول متغير.">
+            <input
+              dir="ltr"
+              autoFocus
+              className="mono"
+              value={form.barcode}
+              onChange={(e) => setForm({ ...form, barcode: e.target.value })}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); nameRef.current?.focus(); } }}
+              placeholder="امسح الباركود هنا…"
+            />
+          </Field>
+        </div>
         <div className="np-photo">
           <ProductImage src={imageDataUrl} alt="صورة الصنف" size={88} />
           <div className="np-photo-body">
@@ -146,7 +213,7 @@ function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; 
         <div className="np-grid">
           <div className="np-span-2">
             <Field label="الاسم" hint="اسم الصنف كما سيظهر في الكاشير والمخزون والفواتير.">
-              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="مثال: حليب كامل الدسم" />
+              <input ref={nameRef} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="مثال: حليب كامل الدسم" />
             </Field>
           </div>
           <Field label="SKU" hint="رمز داخلي اختياري لتمييز الصنف. يمكن البحث به لاحقاً من شريط البحث.">
@@ -173,10 +240,10 @@ function NewProductModal({ onClose, onDone, showToast }: { onClose: () => void; 
               {taxonomy.units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
           </Field>
-          <Field label="المتغيرات" hint="أسماء الألوان أو المقاسات مفصولة بفاصلة عربية «،». يُنشأ لكل منها باركود تلقائي. اتركه فارغاً لصنف بسيط.">
+          <Field label="المتغيرات" hint="أسماء الألوان أو المقاسات مفصولة بفاصلة عربية «،». يُنشأ لكل منها باركود تلقائي (أول متغير يأخذ الباركود الممسوح إن وُجد). اتركه فارغاً لصنف بسيط.">
             <input placeholder="أحمر، أزرق" value={form.variants} onChange={(e) => setForm({ ...form, variants: e.target.value })} />
           </Field>
-          <Field label="سعر البيع" hint="سعر البيع في الفرع الحالي. يُدخل بالشيكل والأغورات كما يظهر للزبون.">
+          <Field label="سعر البيع" hint="سعر البيع في الفرع الحالي بالشيكل كما يظهر للزبون. خانة الأغورات اختيارية ولا يلزم تعبئتها.">
             <SplitAgora agora={form.priceAgora} onAgora={(v) => setForm({ ...form, priceAgora: v })} label="سعر البيع" />
           </Field>
           <Field label="التكلفة" hint="تكلفة شراء الصنف في الفرع الحالي. تُستخدم لحساب الربح ولا تظهر للزبون.">
@@ -316,7 +383,7 @@ function ProductModal({ product, onClose, onDone, showToast }: { product: StockR
           {components.map((c, i) => (
             <div className="row2" key={i}>
               <input value={c.label} onChange={(e) => setComponents(components.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} placeholder="الوصف" />
-              <input type="number" value={c.amountAgora} onChange={(e) => setComponents(components.map((x, j) => j === i ? { ...x, amountAgora: Number(e.target.value) } : x))} placeholder="أغورات" />
+              <SplitAgora agora={c.amountAgora} label="مبلغ المكوّن" onAgora={(v) => setComponents(components.map((x, j) => j === i ? { ...x, amountAgora: v } : x))} />
               <button className="btn secondary small" onClick={() => setComponents(components.filter((_, j) => j !== i))}>✕</button>
             </div>
           ))}
@@ -327,8 +394,8 @@ function ProductModal({ product, onClose, onDone, showToast }: { product: StockR
 
           <h4>سعر وتكلفة الفرع</h4>
           <div className="row2">
-            <Field label="السعر (أغورات)"><input type="number" value={price} onChange={(e) => setPrice(Number(e.target.value))} /></Field>
-            <Field label="التكلفة (أغورات)"><input type="number" value={cost} onChange={(e) => setCost(Number(e.target.value))} /></Field>
+            <Field label="السعر"><SplitAgora agora={price} onAgora={setPrice} label="السعر" /></Field>
+            <Field label="التكلفة"><SplitAgora agora={cost} onAgora={setCost} label="التكلفة" /></Field>
             <button className="btn" onClick={saveBranch}>حفظ</button>
           </div>
         </>

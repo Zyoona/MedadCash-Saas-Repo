@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toAgora } from '@medad/shared-types';
 import { api, money } from '../api.js';
-import { Badge, Field, Modal, Money, useToast } from '../ui.js';
+import { Badge, Field, Modal, Money, SplitAgora, useToast } from '../ui.js';
 import { usePaySources } from '../banks.js';
 
 interface PurchaseRow {
@@ -70,7 +70,7 @@ export function Purchases() {
       </div>
       {receiving && (
         <Modal title={`استلام ${receiving.ref} + دفع`} onClose={() => setReceiving(null)}>
-          <Field label="المدفوع الآن (أغورات، 0 = آجل)"><input type="number" min={0} value={receiving.amount} onChange={(e) => setReceiving({ ...receiving, amount: Number(e.target.value) })} /></Field>
+          <Field label="المدفوع الآن (0 = آجل)"><SplitAgora agora={receiving.amount} label="المدفوع الآن" onAgora={(v) => setReceiving({ ...receiving, amount: v })} /></Field>
           <Field label="يُدفع من">
             <select value={receiving.code} onChange={(e) => setReceiving({ ...receiving, code: e.target.value })}>
               {sources.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
@@ -158,7 +158,7 @@ function NewPurchase({ onClose, onDone, showToast }: { onClose: () => void; onDo
             </Field>
             <div className="row2">
               <Field label="رقم مرجعي"><input value={refNo} onChange={(e) => setRefNo(e.target.value)} /></Field>
-              <Field label="خصم فاتورة (أغورات)"><input type="number" value={discountAgora} onChange={(e) => setDiscount(Number(e.target.value))} /></Field>
+              <Field label="خصم فاتورة"><SplitAgora agora={discountAgora} onAgora={setDiscount} label="خصم فاتورة" /></Field>
               <Field label="ضريبة (نقطة أساس)"><input type="number" value={taxBps} onChange={(e) => setTaxBps(Number(e.target.value))} /></Field>
             </div>
             {lines.map((l) => (
@@ -169,13 +169,13 @@ function NewPurchase({ onClose, onDone, showToast }: { onClose: () => void; onDo
                   onPick={pickVariant(l.uid)}
                 />
                 <input type="number" placeholder="كمية" min={1} value={l.qty} style={{ width: 80 }} onChange={(e) => patchLine(l.uid, { qty: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} />
-                <input type="number" placeholder="تكلفة الوحدة (أغورات)" value={l.unitCostAgora} style={{ width: 130 }} onChange={(e) => patchLine(l.uid, { unitCostAgora: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
-                <input type="number" placeholder="خصم المنتج" value={l.lineDiscountAgora} style={{ width: 100 }} onChange={(e) => patchLine(l.uid, { lineDiscountAgora: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
+                <SplitAgora agora={l.unitCostAgora} label="تكلفة الوحدة" onAgora={(v) => patchLine(l.uid, { unitCostAgora: v })} />
+                <SplitAgora agora={l.lineDiscountAgora} label="خصم المنتج" onAgora={(v) => patchLine(l.uid, { lineDiscountAgora: v })} />
                 <button className="btn secondary small" onClick={() => setLines((prev) => prev.filter((x) => x.uid !== l.uid))}>✕</button>
               </div>
             ))}
             <button className="btn secondary" onClick={() => setLines((prev) => [...prev, newDraftLine()])}>+ سطر</button>
-            <Field label="المدفوع عند الاستلام (أغورات)"><input type="number" value={payAgora} onChange={(e) => setPay(Number(e.target.value))} /></Field>
+            <Field label="المدفوع عند الاستلام"><SplitAgora agora={payAgora} onAgora={setPay} label="المدفوع عند الاستلام" /></Field>
             <p className="muted">ابحث عن الصنف بالاسم أو SKU أو امسح الباركود — يُضاف فوراً عند تطابق الباركود. دفع جزئي والباقي ذمة تلقائياً.</p>
           </div>
         </div>
