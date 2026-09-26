@@ -46,6 +46,7 @@ export function Pos() {
   const canShareBox = !!user?.perms.includes('pos.shift_any') || !!user?.perms.includes('*');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const sessionSeq = useRef(1);
+  const searchRef = useRef<HTMLInputElement | null>(null);
 
   const newSession = (): SaleSession => {
     const no = sessionSeq.current++;
@@ -67,6 +68,11 @@ export function Pos() {
   useEffect(() => {
     if (sessions.length && !sessions.some((s) => s.id === activeId)) setActiveId(sessions[0].id);
   }, [sessions, activeId]);
+
+  // عند الدخول للصفحة: التركيز مباشرة على خانة بحث اسم/SKU/باركود
+  useEffect(() => {
+    searchRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     api<any>('/org/branches').then((bs) => {
@@ -174,6 +180,8 @@ export function Pos() {
     const s = newSession();
     setSessions((ss) => [...ss, s]);
     setActiveId(s.id);
+    // فاتورة الزبون الجديد: إعادة التركيز على خانة البحث نفسها
+    searchRef.current?.focus();
   };
 
   const closeSession = (id: string) => {
@@ -270,7 +278,7 @@ export function Pos() {
               <div className="pos-catalog-head">
                 <h3>الأصناف</h3>
                 <div className="pos-search">
-                  <input placeholder="بحث اسم / SKU / باركود..." value={q} onChange={(e) => void search(e.target.value)} />
+                  <input ref={searchRef} placeholder="بحث اسم / SKU / باركود..." value={q} onChange={(e) => void search(e.target.value)} />
                   {results && (
                     <div className="search-results">
                       {results.products.map((p) => {
