@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, auditEvent, money } from '../api.js';
 import { computeInvoice } from '@medad/shared-types';
-import { Badge, DEFAULT_VARIANT, Field, Money, ProductImage, SplitAgora, Tabs, useToast } from '../ui.js';
+import { Badge, DEFAULT_VARIANT, Field, Modal, Money, ProductImage, SplitAgora, Tabs, useToast } from '../ui.js';
 import { useAuth } from '../auth.js';
-import { bankLabel, CASH_CODE, PAY_METHODS, useBanks, usePaySources } from '../banks.js';
+import { bankLabel, CASH_CODE, methodAr, PAY_METHODS, useBanks, usePaySources } from '../banks.js';
 
 // POS (§Phase4): بحث اسم/SKU/باركود + خصم المنتج وفاتورة + ضريبة أخيراً + دفع متعدد
 // + إرجاع الباقي بطريقة مختلفة (سالب) + مرتجعات + عروض أسعار — بنفس ترتيب الحساب الملزم.
@@ -34,6 +34,13 @@ interface ShiftPanel {
 interface ShiftCloseResult { expectedAgora: number; diffAgora: number; drawerAccountCode: string | null; entryId: string | null; warnings: string[] }
 /** فاتورة بيع مفتوحة — لكل زبون سلته وخصوماته ودفعاته المستقلة */
 interface SaleSession { id: string; no: number; customerId: string; cart: CartLine[]; invoiceDiscount: number; discountPct: number; payments: Payment[]; paymentsTouched: boolean }
+/** تفاصيل فاتورة مُرحَّلة — تُجلب لخيار الطباعة بعد إتمام البيع */
+interface PrintedInvoice {
+  id: string; refNo: string | null; createdAt: string; invoiceDiscountAgora: number; totalAgora: number;
+  customer: { id: string; name: string }; branch: { id: string; name: string };
+  lines: { id: string; qty: number; unitPriceAgora: number; lineDiscountAgora: number; invoiceDiscountShareAgora: number; taxAgora: number; netAgora: number; variant?: { name: string; product?: { name: string } } | null }[];
+  payments: { id: string; method: string; accountCode: string; amountAgora: number }[];
+}
 
 export function Pos() {
   const { user } = useAuth();
@@ -42,6 +49,9 @@ export function Pos() {
   const [branchId, setBranchId] = useState('');
   const [shiftPanel, setShiftPanel] = useState<ShiftPanel | null>(null);
   const shift = shiftPanel?.shift ?? null;
+  const [opening, setOpening] = useState(0);
+  const [shiftBusy, setShiftBusy] = useState(false);
+  const [closeSummary, setCloseSummary] = useState<(ShiftCloseResult & { actualAgora: number }) | null>(null);
   // تجاوز «صندوق الفرع واحد»: مدير/محاسب بصلاحية pos.shift_any يفتح وردية فوق وردية كاشير آخر
   const canShareBox = !!user?.perms.includes('pos.shift_any') || !!user?.perms.includes('*');
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -58,6 +68,7 @@ export function Pos() {
   const [activeId, setActiveId] = useState<string>(() => sessions[0].id);
   const [q, setQ] = useState('');
   const [results, setResults] = useState<SearchRes | null>(null);
+  const [printInvId, setPrintInvId] = useState<string | null>(null);
   const [taxBps, setTaxBps] = useState(0);
   const { banks } = useBanks(true);
   const defaultBankCode = banks[0]?.glAccountCode ?? '1100';
@@ -98,6 +109,14 @@ export function Pos() {
   useEffect(() => {
     loadShiftPanel();
   }, [branchId]);
+
+  // اقتراح مبلغ الافتتاح من آخر إقفال لنفس الكاشير/الفرع (ترحيل العهدة بدل إعادة الإدخال)
+  useEffect(() => {
+    if (!shift && shiftPanel?.suggestedOpeningAgora != null) setOpening(shiftPanel.suggestedOpeningAgora);
+  }, [shift?.id, shiftPanel?.suggestedOpeningAgora]);
+
+  // صندوق الفرع واحد: لا تُفتح وردية ثانية فوق وردية كاشير آخر إلا بصلاحية pos.shift_any
+  const blockedBySharedBox = (shiftPanel?.otherOpenShifts ?? 0) > 0 && !canShareBox;
 
   const patchActive = (fn: (s: SaleSession) => SaleSession) => {
     setSessions((ss) => ss.map((s) => (s.id === activeId ? fn(s) : s)));
@@ -202,6 +221,8 @@ export function Pos() {
         body: { branchId, customerId: active.customerId || null, shiftId: shift?.id ?? null, invoiceDiscountAgora: totals.invoiceDiscountAgora, lines: active.cart, payments: active.payments },
       });
       showToast(`تمت الفاتورة: ${res.invoiceId.slice(0, 8)}${res.warnings.length ? ' — ' + res.warnings.join('، ') : ''}`, res.warnings.length ? 'bad' : 'ok');
+      // خيار طباعة الفاتورة بعد إتمام البيع — يُتجاهل بزر الإغلاق أو Esc
+      setPrintInvId(res.invoiceId);
       // تحديث وظيفي: تعديلات الفواتير الأخرى أثناء انتظار الشبكة لا تُفقد
       const fallback = newSession();
       setSessions((ss) => {
@@ -218,33 +239,42 @@ export function Pos() {
   // الافتتاح: تحويل عهدة نقدية من صندوق الفرع إلى درج الكاشير (Dr درج / Cr 1000).
   // الإقفال: عدّ فعلي مقابل رصيد الدرج من الدفتر، ويُرحَّل التسليم والفرق (5310) في قيد واحد.
   const openShift = async (openingAgora: number) => {
+    if (shiftBusy) return;
+    setShiftBusy(true);
     try {
       const res = await api<{ warnings: string[] }>('/sales/shifts/open', { method: 'POST', body: { branchId, openingAmountAgora: openingAgora } });
       loadShiftPanel();
       showToast(res.warnings?.length ? `تم افتتاح الوردية — ${res.warnings.join('، ')}` : 'تم افتتاح الوردية', res.warnings?.length ? 'bad' : 'ok');
     } catch (e) { showToast((e as Error).message, 'bad'); }
+    finally { setShiftBusy(false); }
   };
   const closeShift = async (actualAgora: number) => {
-    if (!shift) return;
+    if (!shift || shiftBusy) return;
+    setShiftBusy(true);
     try {
       const rep = await api<ShiftCloseResult>(`/sales/shifts/${shift.id}/close`, { method: 'POST', body: { closingActualAgora: actualAgora } });
-      const diff = rep.diffAgora ?? 0;
-      const diffText = diff === 0 ? 'بلا فروق' : `${diff < 0 ? 'عجز' : 'فائض'} ${money(Math.abs(diff))}${rep.entryId ? ' — مُرحَّل 5310' : ''}`;
-      const extra = rep.warnings?.length ? ` — ${rep.warnings.join('، ')}` : '';
-      showToast(`أُقفلت الوردية — متوقع ${money(rep.expectedAgora)} / فعلي ${money(actualAgora)} / ${diffText}${extra}`, diff === 0 && !extra ? 'ok' : 'bad');
+      // ملخص نهاية اليوم بدل تنبيه عابر — يُغلق بزر الإغلاق أو Esc
+      setCloseSummary({ ...rep, actualAgora });
       loadShiftPanel();
     } catch (e) { showToast((e as Error).message, 'bad'); }
+    finally { setShiftBusy(false); }
   };
 
   return (
     <div className="pos-page">
       {toast}
+      {printInvId && <PrintInvoiceModal invoiceId={printInvId} onClose={() => setPrintInvId(null)} />}
+      {closeSummary && <ShiftCloseSummaryModal summary={closeSummary} onClose={() => setCloseSummary(null)} />}
       <div className="pos-toolbar">
         <Tabs active={tab} onChange={setTab} tabs={[{ id: 'sell', label: 'بيع' }, { id: 'return', label: 'مرتجع' }, { id: 'quotes', label: 'عروض الأسعار' }]} />
-        <ShiftBanner panel={shiftPanel} allowSharedBox={canShareBox} onOpen={openShift} onClose={closeShift} />
+        {shiftPanel && shift && <ShiftBanner panel={shiftPanel} busy={shiftBusy} onClose={closeShift} />}
       </div>
       {tab === 'sell' && active && (
-        <>
+        shiftPanel && !shift ? (
+          /* بوابة افتتاح اليوم: بلا وردية مفتوحة لا تُعرض شاشة البيع أصلاً */
+          <ShiftGate panel={shiftPanel} blocked={blockedBySharedBox} opening={opening} onOpening={setOpening} busy={shiftBusy} onOpen={openShift} />
+        ) : (
+          <>
           {/* فواتير مفتوحة متزامنة — فاتورة لكل زبون */}
           <div className="pos-sessions">
             {sessions.map((s) => {
@@ -370,7 +400,8 @@ export function Pos() {
               <button className="btn wide" disabled={!totals || active.cart.length === 0 || remainder < 0} onClick={checkout}>إتمام البيع — فاتورة {active.no}</button>
             </div>
           </div>
-        </>
+          </>
+        )
       )}
       {tab === 'return' && <div className="pos-alt"><ReturnTab onToast={showToast} /></div>}
       {tab === 'quotes' && <div className="pos-alt"><QuotesTab onToast={showToast} canConvert={!!user?.perms.includes('quotations.manage') || !!user?.perms.includes('*')} /></div>}
@@ -379,54 +410,185 @@ export function Pos() {
 }
 
 /**
- * شريط الوردية (§Phase4) — درج عهدة مستقل لكل كاشير (حساب GL أصلي 1010+):
- *  - بلا وردية: «صندوق الفرع» = رصيد 1000 للفرع من الدفتر، وحقل افتتاح = عدّ النقد المُحوَّل
- *    إلى الدرج (يُقترح من العدّ الفعلي لإقفال الكاشير السابق). الافتتاح يرحّل Dr درج / Cr 1000.
- *  - وردية مفتوحة: «المتوقع» = رصيد حساب الدرج من الدفتر، وحقل الفعلي للعدّ عند الإقفال؛
- *    الإقفال يرحّل Dr 1000 (المُسلَّم) + Dr/Cr 5310 (العجز/الفائض) / Cr درج ⇒ الدرج يعود صفراً.
+ * خيار طباعة فاتورة البيع بعد إتمامها — نافذة معاينة بسيطة مع زر طباعة.
+ * تُتجاهل بزر الإغلاق (✕) أو بالنقر خارج النافذة أو Esc من لوحة المفاتيح.
  */
-function ShiftBanner({ panel, allowSharedBox, onOpen, onClose }: { panel: ShiftPanel | null; allowSharedBox: boolean; onOpen: (n: number) => void; onClose: (n: number) => void }) {
-  const shift = panel?.shift ?? null;
-  const expected = panel?.expectedAgora ?? 0;
-  const [opening, setOpening] = useState(0);
-  const [actual, setActual] = useState(0);
-  // اقتراح مبلغ الافتتاح من آخر إقفال لنفس الكاشير/الفرع (ترحيل العهدة بدل إعادة الإدخال)
+function PrintInvoiceModal({ invoiceId, onClose }: { invoiceId: string; onClose: () => void }) {
+  const [detail, setDetail] = useState<PrintedInvoice | null>(null);
+  const printBtnRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
-    if (!shift && panel?.suggestedOpeningAgora != null) setOpening(panel.suggestedOpeningAgora);
-  }, [shift?.id, panel?.suggestedOpeningAgora]);
+    let alive = true;
+    api<PrintedInvoice>(`/sales/invoices/${invoiceId}`)
+      .then((d) => { if (alive) setDetail(d); })
+      .catch(() => onCloseRef.current());
+    return () => { alive = false; };
+  }, [invoiceId]);
+
+  // Esc: تجاهل الطباعة وإغلاق النافذة
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // التركيز على زر الطباعة عند فتح النافذة: Enter يطبع وEsc يتجاهل
+  useEffect(() => { if (detail) printBtnRef.current?.focus(); }, [detail]);
+
+  const doPrint = () => {
+    void auditEvent('print', 'sales');
+    window.print();
+  };
+
+  return (
+    <Modal title="تمت الفاتورة — خيار الطباعة" onClose={onClose}>
+      {!detail ? (
+        <p className="muted">جارٍ تحميل الفاتورة...</p>
+      ) : (
+        <>
+          <div className="pos-print-actions no-print">
+            <button ref={printBtnRef} className="btn" onClick={doPrint}>طباعة الفاتورة</button>
+            <button className="btn secondary" onClick={onClose}>إغلاق (Esc)</button>
+          </div>
+          <div id="pos-print-area">
+            <div className="pos-print-head">
+              <strong>{detail.branch.name}</strong>
+              <span>فاتورة بيع {detail.refNo ?? detail.id.slice(0, 8)}</span>
+              <span>{new Date(detail.createdAt).toLocaleString('ar', { dateStyle: 'short', timeStyle: 'short' })}</span>
+              <span>الزبون: {detail.customer.name}</span>
+            </div>
+            <table className="pos-print-table">
+              <thead><tr><th>الصنف</th><th>كمية</th><th>السعر</th><th>الخصم</th><th>الضريبة</th><th>الصافي</th></tr></thead>
+              <tbody>
+                {detail.lines.map((l) => {
+                  const vName = l.variant?.name && l.variant.name !== DEFAULT_VARIANT ? ` — ${l.variant.name}` : '';
+                  return (
+                    <tr key={l.id}>
+                      <td>{l.variant?.product?.name ?? '—'}{vName}</td>
+                      <td>{l.qty}</td>
+                      <td>{money(l.unitPriceAgora)}</td>
+                      <td>{money(l.lineDiscountAgora + l.invoiceDiscountShareAgora)}</td>
+                      <td>{money(l.taxAgora)}</td>
+                      <td>{money(l.netAgora)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="pos-print-totals">
+              <div><span>خصم فاتورة</span><span>{money(detail.invoiceDiscountAgora)}</span></div>
+              <div><span>الإجمالي</span><strong>{money(detail.totalAgora)}</strong></div>
+              {detail.payments.map((p) => (
+                <div key={p.id}>
+                  <span>{methodAr(p.method)}{p.amountAgora < 0 ? ' (إرجاع باقي)' : ''}</span>
+                  <span>{money(p.amountAgora)}</span>
+                </div>
+              ))}
+              {detail.payments.length === 0 && <div><span>الدفعة</span><span>ذمة (آجل)</span></div>}
+            </div>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+/**
+ * بوابة افتتاح اليوم البيعي — تُعرض بدل شاشة البيع كلها حتى تُفتح وردية الكاشير،
+ * فتصبح الافتتاح أول خطوة لا تُنسى: مبلغ الافتتاح معبأ من عدّ آخر إقفال،
+ * وزر واحد (Enter) يبدأ اليوم. الافتتاح يرحّل Dr درج / Cr 1000.
+ */
+function ShiftGate({ panel, blocked, opening, onOpening, busy, onOpen }: {
+  panel: ShiftPanel; blocked: boolean; opening: number; onOpening: (n: number) => void; busy: boolean; onOpen: (n: number) => void;
+}) {
+  const openBtnRef = useRef<HTMLButtonElement>(null);
+  // التركيز على زر الافتتاح: Enter يبدأ يوم البيع مباشرة
+  useEffect(() => { openBtnRef.current?.focus(); }, []);
+  const suggested = panel.suggestedOpeningAgora;
+  return (
+    <div className="shift-gate">
+      <div className="card shift-gate-card">
+        <h2>ابدأ يوم البيع</h2>
+        <p className="muted">أول خطوة قبل أول فاتورة: افتتاح الوردية يحوّل عهدة نقدية من صندوق الفرع إلى درج الكاشير.</p>
+        <div className="shift-gate-captions">
+          <span className="shift-caption" title="رصيد حساب الصندوق (1000) لفرع POS من دفتر الأستاذ">صندوق الفرع {money(panel.boxBalanceAgora)}</span>
+          {suggested != null && <span className="shift-caption" title="عدّ آخر إقفال لنفس الكاشير — معبأ تلقائياً في خانة الافتتاح">آخر عدّ عند الإقفال: {money(suggested)}</span>}
+        </div>
+        <div className="shift-gate-open">
+          <span className="shift-amount"><span className="shift-caption">الافتتاح (عدّ)</span><SplitAgora agora={opening} onAgora={onOpening} label="الافتتاح" disabled={blocked || busy} /></span>
+          <button ref={openBtnRef} className="btn" disabled={blocked || busy} onClick={() => onOpen(opening)}>افتتاح الوردية</button>
+        </div>
+        {blocked && <p className="shift-gate-blocked">صندوق الفرع واحد — يجب إقفال وردية الكاشير الآخر قبل افتتاح وردية جديدة</p>}
+        {!blocked && <p className="muted shift-gate-hint">اضغط Enter لافتتاح الوردية مباشرة</p>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * شريط الوردية المفتوحة (§Phase4) — درج عهدة مستقل لكل كاشير (حساب GL أصلي 1010+):
+ * «المتوقع» = رصيد حساب الدرج من الدفتر، وحقل الفعلي للعدّ عند الإقفال؛
+ * الإقفال يرحّل Dr 1000 (المُسلَّم) + Dr/Cr 5310 (العجز/الفائض) / Cr درج ⇒ الدرج يعود صفراً.
+ * بلا وردية تُعرض بوابة الافتتاح (ShiftGate) بدل شاشة البيع كلها.
+ */
+function ShiftBanner({ panel, busy, onClose }: { panel: ShiftPanel; busy: boolean; onClose: (n: number) => void }) {
+  const shift = panel.shift;
+  const expected = panel.expectedAgora ?? 0;
+  const [actual, setActual] = useState(expected);
   // تعبئة العدّ الفعلي بالمتوقع عند التعرف على الوردية (يعدّله الكاشير بعد العدّ الحقيقي)
   useEffect(() => {
-    setActual(expected);
+    setActual(panel.expectedAgora ?? 0);
   }, [shift?.id]);
   const diff = actual - expected;
-  // صندوق الفرع واحد: لا تُفتح وردية ثانية فوق وردية كاشير آخر إلا بصلاحية pos.shift_any
-  const blockedBySharedBox = (panel?.otherOpenShifts ?? 0) > 0 && !allowSharedBox;
-  const boxCaption = <span className="shift-caption" title="رصيد حساب الصندوق (1000) لفرع POS من دفتر الأستاذ">صندوق الفرع {money(panel?.boxBalanceAgora ?? 0)}</span>;
-  const expectedTitle = panel?.basis === 'drawer'
+  const expectedTitle = panel.basis === 'drawer'
     ? 'رصيد حساب درج العهدة من دفتر الأستاذ = العهدة المحوَّلة عند الافتتاح + النقد المرحَّل إلى الدرج'
     : 'الافتتاح + صافي حركة حساب الصندوق (1000) لفرع الوردية من دفتر الأستاذ';
-
-  if (shift) {
-    return (
-      <div className="shift-banner open">
-        <span className="shift-status">وردية مفتوحة · {new Date(shift.openedAt).toLocaleTimeString('ar')}</span>
-        {panel?.drawerAccountCode && <span className="shift-caption" title="حساب GL لدرج عهدة الكاشير">درج {panel.drawerAccountCode}</span>}
-        <span className="shift-caption" title={expectedTitle}>المتوقع {money(expected)}</span>
-        {boxCaption}
-        <span className="shift-amount"><span className="shift-caption">الفعلي (عدّ)</span><SplitAgora agora={actual} onAgora={setActual} label="الفعلي" /></span>
-        {diff !== 0 && <span className={`shift-diff ${diff < 0 ? 'short' : 'over'}`}>{diff < 0 ? 'عجز' : 'فائض'} {money(Math.abs(diff))}</span>}
-        <button className="btn small" onClick={() => onClose(actual)}>إقفال</button>
-      </div>
-    );
-  }
   return (
-    <div className="shift-banner">
-      <span className="shift-status">لا وردية مفتوحة</span>
-      {boxCaption}
-      {blockedBySharedBox && <span className="shift-caption shift-blocked" title="صندوق الفرع واحد — يجب إقفال وردية الكاشير الآخر قبل افتتاح وردية جديدة">وردية أخرى مفتوحة في الفرع</span>}
-      <span className="shift-amount"><span className="shift-caption">افتتاح (عدّ)</span><SplitAgora agora={opening} onAgora={setOpening} label="الافتتاح" disabled={blockedBySharedBox} /></span>
-      <button className="btn small" disabled={blockedBySharedBox} onClick={() => onOpen(opening)}>افتتاح</button>
+    <div className="shift-banner open">
+      {shift && <span className="shift-status">وردية مفتوحة · {new Date(shift.openedAt).toLocaleTimeString('ar')}</span>}
+      {panel.drawerAccountCode && <span className="shift-caption" title="حساب GL لدرج عهدة الكاشير">درج {panel.drawerAccountCode}</span>}
+      <span className="shift-caption" title={expectedTitle}>المتوقع {money(expected)}</span>
+      <span className="shift-caption" title="رصيد حساب الصندوق (1000) لفرع POS من دفتر الأستاذ">صندوق الفرع {money(panel.boxBalanceAgora)}</span>
+      <span className="shift-amount"><span className="shift-caption">الفعلي (عدّ)</span><SplitAgora agora={actual} onAgora={setActual} label="الفعلي" /></span>
+      {diff !== 0 && <span className={`shift-diff ${diff < 0 ? 'short' : 'over'}`}>{diff < 0 ? 'عجز' : 'فائض'} {money(Math.abs(diff))}</span>}
+      <button className="btn small" disabled={busy} onClick={() => onClose(actual)}>إقفال</button>
     </div>
+  );
+}
+
+/** ملخص إقفال الوردية — يعزز طقس نهاية اليوم: المتوقع مقابل العدّ والفرق المُرحَّل (5310)، ويُغلق بـ Esc */
+function ShiftCloseSummaryModal({ summary, onClose }: { summary: ShiftCloseResult & { actualAgora: number }; onClose: () => void }) {
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  // Esc: إغلاق الملخص
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  useEffect(() => { closeBtnRef.current?.focus(); }, []);
+  const diff = summary.diffAgora ?? 0;
+  return (
+    <Modal title="أُقفلت الوردية — ملخص اليوم" onClose={onClose}>
+      <div className="totals">
+        <div><span>المتوقع (رصيد درج العهدة{summary.drawerAccountCode ? ` ${summary.drawerAccountCode}` : ''})</span><Money agora={summary.expectedAgora} /></div>
+        <div><span>الفعلي (عدّ)</span><Money agora={summary.actualAgora} /></div>
+        {diff !== 0 && <div><span>{diff < 0 ? 'العجز' : 'الفائض'}{summary.entryId ? ' — مُرحَّل 5310' : ''}</span><Money agora={Math.abs(diff)} /></div>}
+        <div className="grand"><span>المُسلَّم نقداً لصندوق الفرع</span><Money agora={summary.actualAgora} /></div>
+      </div>
+      {summary.warnings.length > 0 && (
+        <ul className="shift-summary-warnings">
+          {summary.warnings.map((w) => <li key={w}>{w}</li>)}
+        </ul>
+      )}
+      <p className="muted">جاهز ليوم جديد — مبلغ افتتاح الغد سيُقترح من هذا العدّ ({money(summary.actualAgora)}).</p>
+      <div className="modal-foot">
+        <button ref={closeBtnRef} className="btn" onClick={onClose}>إغلاق (Esc)</button>
+      </div>
+    </Modal>
   );
 }
 

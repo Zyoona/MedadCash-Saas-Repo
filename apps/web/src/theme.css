@@ -616,6 +616,19 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
 .shift-diff.short { color: var(--danger); border-color: var(--danger); }
 .shift-diff.over { color: var(--accent); border-color: var(--accent); }
 
+/* بوابة افتتاح اليوم البيعي — بلا وردية تُعرض بدل شاشة البيع كلها */
+.shift-gate { flex: 1; min-height: 0; display: grid; place-items: center; overflow: auto; padding: 16px; }
+.shift-gate-card { max-width: 560px; width: 100%; display: flex; flex-direction: column; gap: 12px; padding: 28px; text-align: center; }
+.shift-gate-card h2 { margin: 0; }
+.shift-gate-captions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.shift-gate-open { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.shift-gate-open .split-agora .split-shekels { width: 110px; height: 40px; font-size: 15px; }
+.shift-gate-open .btn { height: 40px; padding: 0 18px; font-weight: 700; }
+.shift-gate-blocked { color: var(--danger); font-weight: 700; font-size: 13px; margin: 0; }
+.shift-gate-hint { font-size: 12px; margin: 0; }
+/* ملخص إقفال الوردية */
+.shift-summary-warnings { color: var(--danger); font-size: 13px; padding-inline-start: 20px; margin: 8px 0; }
+
 /* فواتير بيع مفتوحة متعددة — فاتورة لكل زبون في نفس الوقت */
 .pos-sessions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: none; }
 .pos-session {
@@ -741,8 +754,11 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
 @media print {
   body * { visibility: hidden; }
   #labels-print-area, #labels-print-area *,
-  #purchase-print-area, #purchase-print-area * { visibility: visible; }
+  #purchase-print-area, #purchase-print-area *,
+  #pos-print-area, #pos-print-area * { visibility: visible; }
   #labels-print-area, #purchase-print-area { position: fixed; inset: 0; padding: 4px; overflow: visible; }
+  #pos-print-area { position: fixed; inset: 0; padding: 12px; overflow: visible; background: #fff; color: #000; }
+  #pos-print-area * { color: #000 !important; border-color: #000 !important; }
   .no-print, .topbar, .sidenav, .calc { display: none !important; }
 }
 
@@ -764,6 +780,16 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
 .purchase-totals div { display: flex; justify-content: space-between; font-size: 13.5px; }
 .purchase-totals .grand { font-size: 17px; font-weight: 800; color: var(--accent); border-top: 1px dashed var(--border); margin-top: 4px; padding-top: 6px; }
 .purchase-totals .grand span:first-child { color: var(--text); }
+
+/* خيار طباعة فاتورة البيع بعد إتمامها — أزرار خارج الطباعة + معاينة الفاتورة */
+.pos-print-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+#pos-print-area { border: 1px dashed var(--border); border-radius: var(--radius); padding: 12px; }
+.pos-print-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+.pos-print-head span { font-size: 13px; }
+.pos-print-table { width: 100%; border-collapse: collapse; }
+.pos-print-table th, .pos-print-table td { border: 1px solid var(--border); padding: 4px 6px; text-align: start; font-size: 13px; }
+.pos-print-totals { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; max-width: 420px; }
+.pos-print-totals > div { display: flex; justify-content: space-between; font-size: 13.5px; }
 
 .np-form { display: flex; flex-direction: column; gap: 14px; }
 /* خانة الباركود الأولى في نموذج الصنف الجديد — بارزة لالتقاط مسح الجهاز مباشرة */
@@ -820,3 +846,13 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
   .pos-catalog { min-height: 42vh; }
   .conflict-values { grid-template-columns: 1fr; }
 }
+
+/* الجرد بالباركود: خانة المسح الكبيرة (تستقبل إدخال القارئ) */
+.scan-panel { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
+.scan-box { display: flex; gap: 8px; }
+.scan-box input {
+  flex: 1; min-width: 0; font-size: 20px; letter-spacing: 1px; padding: 10px 12px;
+  background: var(--surface); border: 2px solid var(--accent); border-radius: var(--radius); outline: none;
+}
+.scan-box input:focus { box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.18); }
+.scan-stats { margin: 0; }
