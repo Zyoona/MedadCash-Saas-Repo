@@ -14,6 +14,7 @@ const DATA = path.join(ROOT, '_tools', 'pgsql', 'data');
 const LOG = path.join(ROOT, '_tools', 'pgsql', 'postgres.log');
 const POSTMASTER_PID = path.join(DATA, 'postmaster.pid');
 const LAUNCHER = path.join(__dirname, 'pg-launch.vbs');
+const PG_CTL = path.join(BIN, 'pg_ctl.exe');
 const PORT = '5433';
 
 const cmd = process.argv[2] || 'start';
@@ -105,7 +106,7 @@ if (cmd === 'start') {
     if (!fs.existsSync(path.dirname(LOG))) fs.mkdirSync(path.dirname(LOG), { recursive: true });
     if (!fs.existsSync(LOG)) fs.writeFileSync(LOG, '');
   } catch (e) {}
-  const res = spawnSync('wscript.exe', [LAUNCHER, path.join(BIN, 'postgres.exe'), DATA, PORT, LOG], {
+  const res = spawnSync('wscript.exe', [LAUNCHER, PG_CTL, DATA, PORT, LOG], {
     stdio: 'ignore',
     windowsHide: true,
     timeout: 10000
