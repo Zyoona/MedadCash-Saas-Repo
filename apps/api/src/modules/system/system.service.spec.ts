@@ -1,12 +1,26 @@
-import * as bcrypt from 'bcryptjs';
-import * as fs from 'node:fs';
 import { ConflictException } from '@nestjs/common';
 import { DUMP_ORDER, dumpWhere, restoreDumpTx } from '../sync/backup.service.js';
 
 jest.mock('bcryptjs', () => ({ compare: jest.fn() }));
 jest.mock('archiver', () => ({ __esModule: true, default: jest.fn() }));
 jest.mock('unzipper', () => ({ Open: { file: jest.fn() } }));
+jest.mock('node:fs', () => {
+  const actual = jest.requireActual('node:fs') as Record<string, unknown>;
+  return {
+    ...actual,
+    mkdirSync: jest.fn(),
+    writeFileSync: jest.fn(),
+    unlinkSync: jest.fn(),
+    readdirSync: jest.fn(() => []),
+    renameSync: jest.fn(),
+    statSync: jest.fn(() => ({ size: 100 })),
+    existsSync: jest.fn(() => true),
+    createWriteStream: jest.fn(),
+  };
+});
 
+import * as bcrypt from 'bcryptjs';
+import * as fs from 'node:fs';
 import archiver from 'archiver';
 import * as unzipper from 'unzipper';
 import { SystemService, EXPORT_FORMAT } from './system.service.js';
@@ -14,6 +28,7 @@ import { SystemService, EXPORT_FORMAT } from './system.service.js';
 const mockedCompare = bcrypt.compare as unknown as jest.Mock;
 const mockedArchiver = archiver as unknown as jest.Mock;
 const mockedOpenFile = (unzipper.Open as unknown as { file: jest.Mock }).file;
+const mfs = fs as unknown as Record<string, jest.Mock>;
 
 function delegate() {
   return {
@@ -29,15 +44,28 @@ function delegate() {
 
 function makePrisma(overrides: Record<string, any> = {}) {
   const cache: Record<string, any> = {};
-  const base: any = { $transaction: jest.fn((fn: any) => fn(proxy)), ...overrides };
+  const base: any = { ...overrides } as any;
   const proxy: any = new Proxy(base, {
-    get(t, p: string) {
-      if (p in t) return t[p];
-      if (!(p in cache)) cache[p] = delegate();
-      return cache[p];
+    get(t, p: string | symbol) {
+      if (typeof p !== 'string') return (t as any)[p];
+      if (p === '$transaction') return (t as any)[p] ?? ((fn: any) => fn(proxy));
+      let def = cache[p];
+      if (!def) {
+        def = delegate();
+        cache[p] = def;
+      }
+      if (p in t) {
+        const over = (t as any)[p];
+        if (over && typeof over === 'object' && !Array.isArray(over)) {
+          for (const k of Object.keys(over)) def[k] = over[k];
+        } else {
+          return over;
+        }
+      }
+      return def;
     },
   });
-  (proxy as any).__cache = cache;
+  if (!base.$transaction) base.$transaction = jest.fn((fn: any) => fn(proxy));
   return proxy;
 }
 
@@ -53,18 +81,16 @@ function entry(path: string, json: unknown) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockedCompare.mockResolvedValue(true);
-  jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined as never);
-  jest.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined as never);
-  jest.spyOn(fs, 'unlinkSync').mockImplementation(() => undefined as never);
-  jest.spyOn(fs, 'readdirSync').mockImplementation(() => [] as never);
-  jest.spyOn(fs, 'renameSync').mockImplementation(() => undefined as never);
+  mfs.mkdirSync.mockImplementation((() => undefined) as never);
+  mfs.writeFileSync.mockImplementation((() => undefined) as never);
+  mfs.unlinkSync.mockImplementation((() => undefined) as never);
+  mfs.readdirSync.mockImplementation((() => []) as never);
+  mfs.renameSync.mockImplementation((() => undefined) as never);
+  mfs.statSync.mockImplementation((() => ({ size: 100 })) as never);
+  mfs.existsSync.mockImplementation((() => true) as never);
 });
 
-afterEach(() => {
-  jest.restoreAllMocks();
-});
-
-describe('DUMP_ORDER (§plan handover)', () => {
+describe('DUMP_ORDER', () => {
   test('يشمل bankAccount و cashDrawer', () => {
     expect([...DUMP_ORDER]).toContain('bankAccount');
     expect([...DUMP_ORDER]).toContain('cashDrawer');
@@ -93,7 +119,7 @@ describe('restoreDumpTx', () => {
     expect(db.product.createMany).toHaveBeenCalled();
   });
 
-  test('restore القديم كان unfiltered — الجديد مفلتر', async () => {
+  test('كل الحذف مفلتر بـ tenantId', async () => {
     const db = makePrisma();
     await restoreDumpTx(db, 't1', { product: [] });
     for (const m of ['product', 'category', 'invoice', 'journalEntry'] as const) {
@@ -114,15 +140,38 @@ describe('SystemService.wipeDemo', () => {
       {
         auditLog: { create: txAudit },
         setting: { findFirst: txSettingFindFirst, create: txSettingCreate, update: txSettingUpdate },
-        $transaction: jest.fn((fn: any) => fn(tx)),
       },
       {
-        get(t, p: string) {
-          if (p in t) return (t as any)[p];
+        get(t, p: string | symbol) {
+          if (typeof p !== 'string') return (t as any)[p];
+          if (p in t) {
+            const over = (t as any)[p];
+            if (over && typeof over === 'object' && !Array.isArray(over)) {
+              return new Proxy(over, {
+                get(ot, k: string | symbol) {
+                  if (typeof k !== 'string') return (ot as any)[k];
+                  if (k in ot) return (ot as any)[k];
+                  if (k === 'deleteMany' || k === 'findMany' || k === 'createMany' || k === 'create' || k === 'update' || k === 'findFirst' || k === 'count') {
+                    const fn = jest.fn(async () => {
+                      if (k === 'deleteMany') deleted.push(p);
+                      return k === 'findFirst' ? null : k === 'findMany' ? [] : {};
+                    });
+                    (ot as any)[k] = fn;
+                    return fn;
+                  }
+                  return undefined;
+                },
+              });
+            }
+            return over;
+          }
           return {
             deleteMany: jest.fn(async () => { deleted.push(p); return { count: 0 }; }),
             findMany: jest.fn(async () => []),
             createMany: jest.fn(async () => ({})),
+            findFirst: jest.fn(async () => null),
+            create: jest.fn(async () => ({})),
+            update: jest.fn(async () => ({})),
           };
         },
       },
@@ -133,7 +182,7 @@ describe('SystemService.wipeDemo', () => {
       shift: { count: jest.fn(async () => opts.openShifts ?? 0) },
       $transaction: jest.fn((fn: any) => fn(tx)),
     });
-    return { prisma, tx, deleted, txAudit, txSettingCreate };
+    return { prisma, deleted, txAudit, txSettingCreate };
   }
 
   const body = (over: Record<string, unknown> = {}) => ({
@@ -188,13 +237,6 @@ describe('SystemService.wipeDemo', () => {
     expect(createdArg.tenantId).toBe('t1');
     expect(mockedCompare).toHaveBeenCalledWith('secret', 'h');
   });
-
-  test('الدخول يبقى ممكناً: user لم يُحذف', async () => {
-    const { deleted } = wipePrisma();
-    const svc = new SystemService(wipePrisma().prisma as never);
-    void svc;
-    expect(deleted).not.toContain('user');
-  });
 });
 
 describe('SystemService.importZip', () => {
@@ -202,8 +244,8 @@ describe('SystemService.importZip', () => {
     const prisma = makePrisma({
       user: { findFirst: jest.fn(async () => ({ id: 'u1', tenantId, isActive: true, passwordHash: 'h' })) },
       shift: { count: jest.fn(async () => 0) },
-      $transaction: jest.fn((fn: any) => fn(prisma)),
     });
+    prisma.$transaction = jest.fn((fn: any) => fn(prisma));
     prisma.setting.findFirst.mockImplementation(async ({ where }: any) => {
       if (where?.key === 'backup_keep') return { value: { n: 7 } };
       return null;
@@ -216,7 +258,7 @@ describe('SystemService.importZip', () => {
   const file = () => ({ path: '/tmp/x.zip', originalname: 'medad.zip', size: 100 });
 
   function mockZip(manifest: unknown, dump: unknown, extra: any[] = []) {
-    (jest.spyOn(fs, 'statSync') as jest.Mock).mockReturnValue({ size: 100 } as never);
+    mfs.statSync.mockReturnValue({ size: 100 } as never);
     mockedOpenFile.mockResolvedValue({
       files: [entry('manifest.json', manifest), entry('database.json', dump), ...extra],
     } as never);
@@ -272,11 +314,11 @@ describe('SystemService.exportZip', () => {
     prisma.backupRun.create.mockResolvedValue({ id: 'r1' });
     prisma.backupRun.update.mockResolvedValue({});
     prisma.auditLog.create.mockResolvedValue({});
-    (jest.spyOn(fs, 'statSync') as jest.Mock).mockReturnValue({ size: 10 } as never);
+    mfs.statSync.mockReturnValue({ size: 10 } as never);
     const fakeArchive = { on: jest.fn(), pipe: jest.fn(), append: jest.fn(), file: jest.fn(), finalize: jest.fn() };
     mockedArchiver.mockReturnValue(fakeArchive);
     const fakeOut: any = { on: jest.fn((ev: string, cb: () => void) => { if (ev === 'close') setImmediate(cb); return fakeOut; }) };
-    jest.spyOn(fs, 'createWriteStream').mockReturnValue(fakeOut as never);
+    mfs.createWriteStream.mockReturnValue(fakeOut as never);
     const svc = new SystemService(prisma as never);
     const res = await svc.exportZip('t1', 'u1');
     expect(res.fileName).toContain('medad-export');
