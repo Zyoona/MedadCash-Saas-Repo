@@ -21,7 +21,11 @@ async function bootstrap() {
   const imageUploadJson = express.json({ limit: '10mb' });
   const defaultJson = express.json({ limit: '100kb' });
   const isImageUpload = (req: express.Request) => req.method === 'POST' && /^\/api\/catalog\/products\/[^/]+\/image\/?$/.test(req.originalUrl);
-  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => (isImageUpload(req) ? imageUploadJson(req, res, next) : defaultJson(req, res, next)));
+  const isMultipart = (req: express.Request) => /multipart\/form-data/i.test(String(req.headers['content-type'] ?? ''));
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (isMultipart(req)) return next();
+    return (isImageUpload(req) ? imageUploadJson(req, res, next) : defaultJson(req, res, next));
+  });
   app.use(express.urlencoded({ extended: true, limit: '100kb' }));
   // صور الأصناف المرفوعة — عامة (بدون توكن) لأن <img> لا يرسل Authorization
   try {

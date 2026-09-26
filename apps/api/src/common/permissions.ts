@@ -22,6 +22,7 @@ export const PERMS = [
   'reports.view',
   'sync.view', 'sync.resolve',
   'backup.view', 'backup.manage',
+  'system.wipe',
   'override_credit_limit',
 ] as const;
 export type Perm = (typeof PERMS)[number];

@@ -15,8 +15,8 @@ export interface BackupProvider {
   backup(tenantId: string): Promise<{ filePath: string; bytes: number }>;
 }
 
-const DUMP_ORDER = [
-  'tenant', 'branch', 'user', 'account', 'fiscalYear', 'setting',
+export const DUMP_ORDER = [
+  'tenant', 'branch', 'user', 'account', 'bankAccount', 'cashDrawer', 'fiscalYear', 'setting',
   'category', 'brand', 'unit', 'customer', 'supplier',
   'product', 'productVariant', 'productUnit', 'costComponent', 'productBranch', 'branchStock',
   'shift', 'purchase', 'purchaseLine', 'supplierPayment',
@@ -28,16 +28,67 @@ const DUMP_ORDER = [
 ] as const;
 
 // Child tables have no tenantId column — filter through the parent relation.
-const PARENT_REL: Record<string, string> = {
+export const PARENT_REL: Record<string, string> = {
   journalLine: 'entry', purchaseLine: 'purchase', supplierPayment: 'purchase',
   invoiceLine: 'invoice', invoicePayment: 'invoice', saleReturnLine: 'ret',
   quotationLine: 'quotation', stockTransferLine: 'transfer', stockCountLine: 'count',
 };
 
-function dumpWhere(model: string, tenantId: string): Record<string, unknown> {
+export function dumpWhere(model: string, tenantId: string): Record<string, unknown> {
   if (model === 'tenant') return { id: tenantId };
   if (PARENT_REL[model]) return { [PARENT_REL[model]]: { tenantId } };
   return { tenantId };
+}
+
+/** Shared full-tenant dump (reused by LocalBackupProvider + SystemService export/safety). */
+export async function dumpTenant(prisma: Db, tenantId: string): Promise<Record<string, unknown[]>> {
+  const dump: Record<string, unknown[]> = { exportedAt: [new Date().toISOString()], tenantId: [tenantId] };
+  for (const model of DUMP_ORDER) {
+    const delegate = (prisma as unknown as Record<string, { findMany(args: unknown): Promise<unknown[]> }>)[model];
+    if (!delegate) continue;
+    dump[model] = await delegate.findMany({ where: dumpWhere(model, tenantId) });
+  }
+  return dump;
+}
+
+export type RestorePreserve = {
+  /** setting keys (branchId=null) to keep from current DB, not from dump */
+  keepSettings?: string[];
+  /** extra backupRun rows (e.g. pre-import-auto safety) to re-insert after replace */
+  keepBackupRuns?: Record<string, unknown>[];
+};
+
+/** Scoped replace: delete (reverse deps, tenant-scoped, never tenant row) + insert dump order. */
+export async function restoreDumpTx(db: Db, tenantId: string, dump: Record<string, unknown[]>, preserve?: RestorePreserve) {
+  // Stash preserved tenant-level settings before wiping (read inside tx for consistency).
+  let stashedSettings: Record<string, unknown>[] = [];
+  if (preserve?.keepSettings?.length) {
+    const rows = await db.setting.findMany({ where: { tenantId, branchId: null, key: { in: preserve.keepSettings } } });
+    stashedSettings = rows as unknown as Record<string, unknown>[];
+  }
+  for (const model of [...DUMP_ORDER].reverse()) {
+    if (model === 'tenant') continue;
+    await db[model].deleteMany({ where: dumpWhere(model, tenantId) });
+  }
+  for (const model of DUMP_ORDER) {
+    if (model === 'tenant') continue;
+    let rows = (dump[model] ?? []) as Record<string, unknown>[];
+    if (model === 'setting' && preserve?.keepSettings?.length) {
+      const keep = new Set(preserve.keepSettings);
+      rows = rows.filter((r) => !(r.branchId === null && typeof r.key === 'string' && keep.has(r.key)));
+    }
+    if (model === 'backupRun' && preserve?.keepBackupRuns?.length) {
+      rows = [...rows, ...(preserve.keepBackupRuns as Record<string, unknown>[])];
+    }
+    if (rows.length > 0) await db[model].createMany({ data: rows as never });
+  }
+  // Re-apply stashed settings (upsert by unique tenantId_branchId_key).
+  for (const s of stashedSettings) {
+    const row = s as { key: string; value: unknown; branchId: string | null };
+    const existing = await db.setting.findFirst({ where: { tenantId, branchId: row.branchId ?? null, key: row.key } });
+    if (existing) await db.setting.update({ where: { id: (existing as { id: string }).id }, data: { value: row.value as never } });
+    else await db.setting.create({ data: { tenantId, branchId: row.branchId ?? null, key: row.key, value: row.value as never } });
+  }
 }
 
 @Injectable()
@@ -47,11 +98,7 @@ export class LocalBackupProvider implements BackupProvider {
 
   async backup(tenantId: string): Promise<{ filePath: string; bytes: number }> {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
-    const dump: Record<string, unknown[]> = { exportedAt: [new Date().toISOString()], tenantId: [tenantId] };
-    for (const model of DUMP_ORDER) {
-      const delegate = (this.prisma as unknown as Record<string, { findMany(args: unknown): Promise<unknown[]> }>)[model];
-      dump[model] = await delegate.findMany({ where: dumpWhere(model, tenantId) });
-    }
+    const dump = await dumpTenant(this.prisma as unknown as Db, tenantId);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const filePath = path.join(BACKUP_DIR, `medad-${tenantId.slice(0, 8)}-${ts}.json`);
     fs.writeFileSync(filePath, JSON.stringify(dump), 'utf8');
@@ -214,14 +261,11 @@ export class BackupService implements OnModuleInit {
     if (!filePath.startsWith(BACKUP_DIR)) throw new BadRequestException('مسار النسخة خارج مجلد النسخ');
     if (!fs.existsSync(filePath)) throw new BadRequestException('ملف النسخة غير موجود');
     const dump = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown[]>;
+    if (Array.isArray(dump.tenantId) && dump.tenantId[0] && dump.tenantId[0] !== tenantId) {
+      throw new BadRequestException('النسخة تخص مستأجراً آخر');
+    }
     await this.prisma.$transaction(async (db: Db) => {
-      for (const model of [...DUMP_ORDER].reverse()) {
-        await db[model].deleteMany({});
-      }
-      for (const model of DUMP_ORDER) {
-        const rows = dump[model] ?? [];
-        if (rows.length > 0) await db[model].createMany({ data: rows });
-      }
+      await restoreDumpTx(db, tenantId, dump);
       await auditTx(db, { tenantId, actorId, action: 'restore', entity: 'backup_runs', diff: { filePath } });
     }, { timeout: 120000 });
     return { ok: true, file: filePath };

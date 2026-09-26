@@ -120,6 +120,84 @@ export async function api<T = unknown>(
 
 export const money = formatILS;
 
+/** تنزيل ملف ثنائي (ZIP): Authorization + tryRefresh، ثم حفظ عبر <a download>. */
+export async function downloadApi(path: string, fallbackName: string): Promise<void> {
+  setPendingCount(pendingCount + 1);
+  try {
+    const doFetch = () =>
+      fetch(`/api${path}`, { method: 'GET', headers: { Authorization: `Bearer ${accessToken}` } });
+    let res: Response;
+    try {
+      res = await doFetch();
+    } catch {
+      throw new Error('تعذر الاتصال بالخادم — تحقق من اتصالك بالإنترنت ثم أعد المحاولة');
+    }
+    if (res.status === 401 && (await tryRefresh())) {
+      res = await doFetch();
+    }
+    if (!res.ok) {
+      let msg = HTTP_STATUS_AR[res.status] ?? `تعذر إتمام العملية (رمز الخطأ: ${res.status})`;
+      if (res.status < 500) {
+        try {
+          const data = await res.clone().json();
+          const m = data?.message;
+          if (typeof m === 'string' && m.trim()) msg = m;
+          else if (Array.isArray(m) && m.length) msg = m.join('، ');
+        } catch { /* keep default */ }
+      }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const disp = res.headers.get('Content-Disposition') ?? '';
+    const m = /filename="?([^";]+)"?/.exec(disp);
+    const name = m?.[1] ?? fallbackName;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  } finally {
+    setPendingCount(Math.max(0, pendingCount - 1));
+  }
+}
+
+/** رفع multipart (FormData): بدون Content-Type يدوي، مع Authorization + tryRefresh، يرجع JSON. */
+export async function uploadApi<T = unknown>(path: string, form: FormData, retry = false): Promise<T> {
+  setPendingCount(pendingCount + 1);
+  try {
+    let res: Response;
+    try {
+      res = await fetch(`/api${path}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: form,
+      });
+    } catch {
+      throw new Error('تعذر الاتصال بالخادم — تحقق من اتصالك بالإنترنت ثم أعد المحاولة');
+    }
+    if (res.status === 401 && !retry && (await tryRefresh())) {
+      setPendingCount(Math.max(0, pendingCount - 1));
+      return uploadApi<T>(path, form, true);
+    }
+    if (!res.ok) {
+      let msg = HTTP_STATUS_AR[res.status] ?? `تعذر إتمام العملية (رمز الخطأ: ${res.status})`;
+      if (res.status < 500) {
+        try {
+          const data = await res.json();
+          const mm = data?.message;
+          if (typeof mm === 'string' && mm.trim()) msg = mm;
+          else if (Array.isArray(mm) && mm.length) msg = mm.join('، ');
+        } catch { /* keep default */ }
+      }
+      throw new Error(msg);
+    }
+    return (await res.json()) as T;
+  } finally {
+    setPendingCount(Math.max(0, pendingCount - 1));
+  }
+}
+
 /** Send a read-audit event (view/search/print §7) — best effort. */
 export function auditEvent(action: string, entity: string, entityId?: string): void {
   void api('/audit/event', { method: 'POST', body: { action, entity, entityId }, silent: true }).catch(() => undefined);

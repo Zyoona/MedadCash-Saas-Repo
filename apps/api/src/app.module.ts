@@ -14,6 +14,7 @@ import { PurchasesModule } from './modules/purchases/purchases.module.js';
 import { SalesModule } from './modules/sales/sales.module.js';
 import { OpsModule } from './modules/ops/ops.module.js';
 import { SyncModule } from './modules/sync/sync.module.js';
+import { SystemModule } from './modules/system/system.module.js';
 import { DashboardModule } from './modules/dashboard/dashboard.module.js';
 import { ReportsModule } from './modules/reports/reports.module.js';
 import { HealthController } from './health.controller.js';
@@ -35,6 +36,7 @@ import { HealthController } from './health.controller.js';
     SalesModule,
     OpsModule,
     SyncModule,
+    SystemModule,
     DashboardModule,
     ReportsModule,
   ],

@@ -1,21 +1,29 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api.js';
-import { Badge, Field, useToast } from '../ui.js';
+import { api, downloadApi, uploadApi } from '../api.js';
+import { Badge, Field, Modal, useToast } from '../ui.js';
 import { useAuth } from '../auth.js';
 
 export function Settings() {
   const [tab, setTab] = useState('general');
+  const { can } = useAuth();
+  const tabs: [string, string][] = [
+    ['general', 'عامة'],
+    ['users', 'المستخدمون والصلاحيات'],
+    ['branches', 'الفروع'],
+  ];
+  if (can('backup.view') || can('system.wipe')) tabs.push(['maintenance', 'النسخ والصيانة']);
   return (
     <div className="card">
       <h2>الإعدادات</h2>
       <div className="tabs">
-        {[['general', 'عامة'], ['users', 'المستخدمون والصلاحيات'], ['branches', 'الفروع']].map(([id, label]) => (
+        {tabs.map(([id, label]) => (
           <button key={id} className={tab === id ? 'tab active' : 'tab'} onClick={() => setTab(id)}>{label}</button>
         ))}
       </div>
       {tab === 'general' && <GeneralTab />}
       {tab === 'users' && <UsersTab />}
       {tab === 'branches' && <BranchesTab />}
+      {tab === 'maintenance' && <MaintenanceTab />}
     </div>
   );
 }
@@ -215,5 +223,154 @@ function BranchesTab() {
         <tbody>{rows.map((b) => <tr key={b.id}><td>{b.name}</td><td>{b.address ?? '—'}</td><td>{b.phone ?? '—'}</td></tr>)}</tbody>
       </table>
     </div>
+  );
+}
+
+function MaintenanceTab() {
+  const { can } = useAuth();
+  const [s, setS] = useState<Record<string, any>>({});
+  const [toast, showToast] = useToast();
+  const [busy, setBusy] = useState(false);
+  const [wipeOpen, setWipeOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [safety, setSafety] = useState('');
+
+  const load = () => api<Record<string, any>>('/settings').then(setS).catch((e) => showToast((e as Error).message, 'bad'));
+  useEffect(() => { void load(); }, []);
+
+  const wipeDone = !!s.demo_wipe_done?.done;
+
+  const doExport = async () => {
+    setBusy(true);
+    try {
+      await downloadApi('/system/export-zip', 'medad-export.zip');
+      showToast('نُزّلت النسخة (ZIP) — احتُفظ بنسخة في مجلد النسخ أيضاً');
+    } catch (e) { showToast((e as Error).message, 'bad'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      {toast}
+      {can('backup.view') && (
+        <div className="card">
+          <h4>تنزيل نسخة كاملة (ZIP)</h4>
+          <p className="muted">تشمل قاعدة البيانات + صور الأصناف. تُحفظ نسخة في مجلد النسخ وتُحترم سياسة الاحتفاظ.</p>
+          <button className="btn" onClick={doExport} disabled={busy}>{busy ? 'جارٍ التجهيز...' : 'تنزيل ZIP الآن'}</button>
+        </div>
+      )}
+      {can('system.wipe') && (
+        <div className="card">
+          <h4>استيراد نسخة (استبدال كامل)</h4>
+          <p className="muted">يستبدل كل البيانات الحالية بمحتوى ZIP بعد أخذ نسخة أمان تلقائية. متاح دائماً للطوارئ.</p>
+          <button className="btn secondary" onClick={() => setImportOpen(true)}>استيراد ZIP...</button>
+          {safety && <div className="alert ok">تم الاستيراد — نسخة الأمان: <span className="mono small">{safety}</span> — حدّث الصفحة.</div>}
+        </div>
+      )}
+      {can('system.wipe') && (
+        <div className="card">
+          <h4>منطقة الخطر — حذف البيانات التجريبية (لمرة واحدة)</h4>
+          {wipeDone ? (
+            <div className="alert warn">تم تصفير البيانات بتاريخ {s.demo_wipe_done?.at ? new Date(s.demo_wipe_done.at).toLocaleString('ar') : '—'} — لا يمكن إعادة الاستخدام. التراجع عبر استيراد نسخة ZIP.</div>
+          ) : (
+            <>
+              <p className="muted">يحذف الأصناف/المخزون/الحركات ويُبقي التأسيس (المستأجر/الفروع/المستخدمين/الدليل/السنوات/الإعدادات).</p>
+              <button className="btn danger" onClick={() => setWipeOpen(true)}>حذف كافة البيانات التجريبية (لمرة واحدة)</button>
+            </>
+          )}
+        </div>
+      )}
+      {wipeOpen && <WipeModal onClose={() => setWipeOpen(false)} onDone={() => { setWipeOpen(false); load(); }} />}
+      {importOpen && <ImportModal onClose={() => setImportOpen(false)} onDone={(sb) => { setSafety(sb); setImportOpen(false); }} />}
+    </div>
+  );
+}
+
+function WipeModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [, showToast] = useToast();
+  const [phrase, setPhrase] = useState('');
+  const [ack, setAck] = useState(false);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const valid = phrase === 'حذف نهائي' && ack && password.length > 0;
+
+  const submit = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      await api('/system/wipe-demo', { method: 'POST', body: { password, confirmPhrase: phrase, acknowledge: ack } });
+      showToast('حُذفت البيانات التجريبية — ابدأ ببيانات حقيقية نظيفة');
+      onDone();
+    } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title="تأكيد حذف البيانات التجريبية" onClose={onClose}>
+      <div className="alert bad">عملية نهائية لا يمكن التراجع عنها إلا باستعادة نسخة ZIP. تُحذف الأصناف والصور والمخزون والحركات.</div>
+      <Field label="اكتب عبارة التأكيد: حذف نهائي">
+        <input value={phrase} onChange={(e) => setPhrase(e.target.value)} dir="rtl" />
+      </Field>
+      <label><input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> أفهم أن الحذف نهائي ولا رجعة فيه</label>
+      <Field label="كلمة مرور المدير">
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} dir="ltr" />
+      </Field>
+      {err && <div className="alert bad">{err}</div>}
+      <div className="row2">
+        <button className="btn danger" onClick={submit} disabled={!valid || busy}>{busy ? 'جارٍ الحذف...' : 'حذف نهائي'}</button>
+        <button className="btn secondary" onClick={onClose}>إلغاء</button>
+      </div>
+    </Modal>
+  );
+}
+
+function ImportModal({ onClose, onDone }: { onClose: () => void; onDone: (safety: string) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [phrase, setPhrase] = useState('');
+  const [ack, setAck] = useState(false);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const valid = !!file && phrase === 'استعادة' && ack && password.length > 0;
+
+  const submit = async () => {
+    if (!file) return;
+    setBusy(true);
+    setErr('');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('password', password);
+      form.append('confirmPhrase', phrase);
+      form.append('acknowledge', 'true');
+      const res = await uploadApi<{ safetyBackup: string }>('/system/import-zip', form);
+      onDone(res.safetyBackup);
+    } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title="استيراد نسخة ZIP" onClose={onClose}>
+      <div className="alert warn">يستبدل كل البيانات الحالية نهائياً (بعد أخذ نسخة أمان تلقائية من الوضع الحالي).</div>
+      <Field label="ملف النسخة (.zip)">
+        <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+      </Field>
+      {file && <p className="muted">{file.name} — {(file.size / 1024 / 1024).toFixed(2)} MB</p>}
+      <Field label="اكتب عبارة التأكيد: استعادة">
+        <input value={phrase} onChange={(e) => setPhrase(e.target.value)} dir="rtl" />
+      </Field>
+      <label><input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> أفهم أن الاستيراد سيستبدل كل البيانات الحالية نهائياً</label>
+      <Field label="كلمة مرور المدير">
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} dir="ltr" />
+      </Field>
+      {err && <div className="alert bad">{err}</div>}
+      <div className="row2">
+        <button className="btn" onClick={submit} disabled={!valid || busy}>{busy ? 'جارٍ الاستيراد...' : 'استيراد واستبدال'}</button>
+        <button className="btn secondary" onClick={onClose}>إلغاء</button>
+      </div>
+    </Modal>
   );
 }
