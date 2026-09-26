@@ -13,7 +13,9 @@ const APP_URL = 'http://127.0.0.1:5173/';
 const WEB_URL = 'http://127.0.0.1:5173/';
 const API_URL = 'http://127.0.0.1:3000/api/health';
 const START = Date.now();
-const MAX_MS = 5 * 60 * 1000;
+const MAX_MS = 10 * 60 * 1000;
+// إذا جاهزة الويب وتأخر API وحده: نفتح التطبيق على أي حال بعد هذه المدة (بثوان)
+const FORCE_OPEN_S = 180;
 
 function reachable(url) {
   return new Promise((resolve) => {
@@ -160,6 +162,8 @@ const PAGE = `<!doctype html>
   var loaderEl = document.getElementById('loader');
   var start = Date.now();
   var target = '';
+  // يتم تمرير FORCE_OPEN_S من الخادم، لكن نحتفظ به محلياً للمتانة
+  var FORCE_OPEN_S = 180;
   function go() {
     loaderEl.className = 'brand-loader leaving';
     try { var d = new XMLHttpRequest(); d.open('POST', '/done', true); d.send(); } catch (e) {}
@@ -170,6 +174,13 @@ const PAGE = `<!doctype html>
     if (s.ready) {
       statusEl.textContent = 'اكتمل التجهيز — جارٍ فتح النظام...';
       barEl.style.width = '100%';
+      go();
+      return;
+    }
+    // fallback: الويب جاهز وتأخر API وحده — نفتح على أي حال بعد FORCE_OPEN_S ثانية
+    if (s.web && s.elapsed >= FORCE_OPEN_S) {
+      statusEl.textContent = 'خادم API لم يكتمل بعد — جارٍ فتح النظام على أي حال...';
+      barEl.style.width = '90%';
       go();
       return;
     }
