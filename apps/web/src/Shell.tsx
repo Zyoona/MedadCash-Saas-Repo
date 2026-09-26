@@ -13,6 +13,7 @@ const NAV: { to: string; label: string; perm: string }[] = [
   { to: '/purchases', label: 'المشتريات', perm: 'purchases.view' },
   { to: '/parties', label: 'العملاء والموردون', perm: 'parties.view' },
   { to: '/ledger', label: 'القيود والأستاذ', perm: 'ledger.view' },
+  { to: '/reports', label: 'التقارير', perm: 'reports.view' },
   { to: '/counts', label: 'الجرد', perm: 'inventory.view' },
   { to: '/transfers', label: 'نقل بين الفروع', perm: 'inventory.view' },
   { to: '/tasks', label: 'المهام', perm: 'tasks.view' },

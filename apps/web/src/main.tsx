@@ -13,6 +13,7 @@ import { Purchases } from './pages/Purchases.js';
 import { PurchaseDetails } from './pages/PurchaseDetails.js';
 import { Parties } from './pages/Parties.js';
 import { LedgerPage } from './pages/Ledger.js';
+import { Reports } from './pages/Reports.js';
 import { Counts } from './pages/Counts.js';
 import { Transfers } from './pages/Transfers.js';
 import { Tasks } from './pages/Tasks.js';
@@ -41,6 +42,7 @@ const router = createHashRouter([
       { path: 'purchases/:id', element: <PurchaseDetails /> },
       { path: 'parties', element: <Parties /> },
       { path: 'ledger', element: <LedgerPage /> },
+      { path: 'reports', element: <Reports /> },
       { path: 'counts', element: <Counts /> },
       { path: 'transfers', element: <Transfers /> },
       { path: 'tasks', element: <Tasks /> },

@@ -15,6 +15,7 @@ import { SalesModule } from './modules/sales/sales.module.js';
 import { OpsModule } from './modules/ops/ops.module.js';
 import { SyncModule } from './modules/sync/sync.module.js';
 import { DashboardModule } from './modules/dashboard/dashboard.module.js';
+import { ReportsModule } from './modules/reports/reports.module.js';
 import { HealthController } from './health.controller.js';
 
 @Module({
@@ -35,6 +36,7 @@ import { HealthController } from './health.controller.js';
     OpsModule,
     SyncModule,
     DashboardModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
 })

@@ -22,6 +22,8 @@ const STATUS_AR: Record<string, { label: string; tone: 'ok' | 'warn' | 'bad' }> 
 };
 
 const dtShort = (iso: string) => new Date(iso).toLocaleString('ar', { dateStyle: 'short', timeStyle: 'short' });
+/** التاريخ فقط — التاريخ والوقت كاملان يظهران عند المرور (title) لتضييق الجدول */
+const dtDate = (iso: string) => new Date(iso).toLocaleDateString('ar', { dateStyle: 'short' });
 
 export function Purchases() {
   const [rows, setRows] = useState<PurchaseRow[] | null>(null);
@@ -142,7 +144,7 @@ export function Purchases() {
       </div>
 
       <div className="table-scroll">
-      <table className="grid">
+      <table className="grid dense">
         <thead>
           <tr>
             <th>مرجع</th><th>تاريخ الإضافة</th><th>المورد</th><th>الفرع</th><th>أسطر</th>
@@ -155,10 +157,10 @@ export function Purchases() {
             const paid = p.payments.reduce((s, x) => s + x.amountAgora, 0);
             return (
               <tr key={p.id}>
-                <td className="mono">{p.refNo ?? p.id.slice(0, 8)}</td>
-                <td>{dtShort(p.createdAt)}</td>
-                <td>{p.supplier.name}</td>
-                <td>{p.branch?.name ?? '—'}</td>
+                <td className="mono" title={p.refNo ?? p.id}><span className="clip">{p.refNo ?? p.id.slice(0, 8)}</span></td>
+                <td title={dtShort(p.createdAt)}>{dtDate(p.createdAt)}</td>
+                <td title={p.supplier.name}><span className="clip">{p.supplier.name}</span></td>
+                <td title={p.branch?.name}><span className="clip">{p.branch?.name ?? '—'}</span></td>
                 <td>{p.lines.length}</td>
                 <td>{p.totals ? <Money agora={p.totals.grandTotalAgora} /> : '—'}</td>
                 <td><Money agora={paid} /></td>
@@ -168,7 +170,7 @@ export function Purchases() {
                   <button className="btn secondary small" onClick={() => navigate(`/purchases/${p.id}`)}>تفاصيل</button>
                   {p.status === 'ordered' && <button className="btn secondary small" onClick={() => act(p.id, 'pending')}>تعليق</button>}
                   {p.status !== 'received' && (
-                    <button className="btn small" onClick={() => setReceiving({ id: p.id, ref: p.refNo ?? p.id.slice(0, 8), amount: 0, code: sources[0]?.code ?? '1000' })}>استلام + دفع</button>
+                    <button className="btn small" title="استلام الفاتورة وتسجيل الدفع" onClick={() => setReceiving({ id: p.id, ref: p.refNo ?? p.id.slice(0, 8), amount: 0, code: sources[0]?.code ?? '1000' })}>استلام</button>
                   )}
                 </td>
               </tr>
