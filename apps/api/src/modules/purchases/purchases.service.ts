@@ -30,18 +30,59 @@ export interface PurchaseTotals {
 export class PurchasesService {
   constructor(private readonly prisma: PrismaService, private readonly ledger: LedgerService, private readonly inventory: InventoryService) {}
 
-  async list(tenantId: string, q: { branchId?: string; status?: string; supplierId?: string }) {
-    return this.prisma.purchase.findMany({
+  async list(tenantId: string, q: { branchId?: string; status?: string; supplierId?: string; q?: string; from?: string; to?: string }) {
+    const term = q.q?.trim();
+    const rows = await this.prisma.purchase.findMany({
       where: {
         tenantId, deletedAt: null,
         ...(q.branchId ? { branchId: q.branchId } : {}),
         ...(q.status ? { status: q.status } : {}),
         ...(q.supplierId ? { supplierId: q.supplierId } : {}),
+        ...(q.from || q.to ? { createdAt: { ...(q.from ? { gte: new Date(q.from) } : {}), ...(q.to ? { lte: new Date(q.to) } : {}) } } : {}),
+        ...(term
+          ? {
+              OR: [
+                { refNo: { contains: term, mode: 'insensitive' as const } },
+                { supplier: { is: { name: { contains: term, mode: 'insensitive' as const } } } },
+              ],
+            }
+          : {}),
       },
-      orderBy: { createdAt: 'desc' },
-      include: { supplier: { select: { id: true, name: true } }, lines: true, payments: true },
+      // الأحدث أولاً ثم الأقدم
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      include: {
+        supplier: { select: { id: true, name: true } },
+        branch: { select: { id: true, name: true } },
+        lines: true,
+        payments: { orderBy: { createdAt: 'asc' } },
+      },
       take: 200,
     });
+    return rows.map((p) => {
+      const totals = this.safeTotals(p.lines, p.discountAgora, p.taxRateBps);
+      const paidAgora = p.payments.reduce((s, x) => s + decToAgora(x.amount), 0);
+      return {
+        id: p.id, status: p.status, refNo: p.refNo, createdAt: p.createdAt, notes: p.notes,
+        discountAgora: p.discountAgora, taxRateBps: p.taxRateBps, taxAgora: p.taxAgora,
+        supplier: p.supplier, branch: p.branch,
+        lines: p.lines.map((l) => ({ id: l.id, variantId: l.variantId, qty: l.qty, unitCostAgora: l.unitCostAgora, lineDiscountAgora: l.lineDiscountAgora })),
+        payments: p.payments.map((x) => ({ id: x.id, accountCode: x.accountCode, amountAgora: decToAgora(x.amount), createdAt: x.createdAt })),
+        totals: totals && {
+          grandTotalAgora: totals.grandTotalAgora,
+          paidAgora,
+          remainderAgora: Math.max(0, totals.grandTotalAgora - paidAgora),
+        },
+      };
+    });
+  }
+
+  /** إجماليات عرض القائمة فقط — لا ترمي أخطاء (بيانات تاريخية قد تكون غير متسقة) */
+  private safeTotals(lines: { variantId: string; qty: number; unitCostAgora: number; lineDiscountAgora: number }[], discountAgora: number, taxRateBps: number) {
+    try {
+      return this.computeTotals(lines.map((l) => ({ ...l, productId: '' })), discountAgora, taxRateBps);
+    } catch {
+      return null;
+    }
   }
 
   async get(tenantId: string, id: string) {

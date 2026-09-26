@@ -1,32 +1,74 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toAgora } from '@medad/shared-types';
-import { api, money } from '../api.js';
-import { Badge, Field, Modal, Money, SplitAgora, useToast } from '../ui.js';
+import { api, auditEvent, money } from '../api.js';
+import { Badge, CsvButton, Field, Modal, Money, SplitAgora, useToast } from '../ui.js';
 import { usePaySources } from '../banks.js';
 
 interface PurchaseRow {
-  id: string; status: string; refNo: string | null; discountAgora: number; taxRateBps: number; taxAgora: number;
-  supplier: { name: string };
+  id: string; status: string; refNo: string | null; createdAt: string;
+  discountAgora: number; taxRateBps: number; taxAgora: number;
+  supplier: { id: string; name: string };
+  branch: { id: string; name: string } | null;
   lines: { id: string; variantId: string; qty: number; unitCostAgora: number; lineDiscountAgora: number }[];
-  payments: { amountAgora: number }[];
+  payments: { id: string; accountCode: string; amountAgora: number; createdAt: string }[];
+  totals: { grandTotalAgora: number; paidAgora: number; remainderAgora: number } | null;
 }
 
+const STATUS_AR: Record<string, { label: string; tone: 'ok' | 'warn' | 'bad' }> = {
+  received: { label: 'مستلمة', tone: 'ok' },
+  pending: { label: 'معلقة', tone: 'warn' },
+  ordered: { label: 'طلبية', tone: 'warn' },
+};
+
+const dtShort = (iso: string) => new Date(iso).toLocaleString('ar', { dateStyle: 'short', timeStyle: 'short' });
+
 export function Purchases() {
-  const [rows, setRows] = useState<PurchaseRow[]>([]);
+  const [rows, setRows] = useState<PurchaseRow[] | null>(null);
   const [creating, setCreating] = useState(false);
   const [receiving, setReceiving] = useState<{ id: string; ref: string; amount: number; code: string } | null>(null);
   const { sources } = usePaySources(true);
   const [toast, showToast] = useToast();
   const navigate = useNavigate();
 
-  const load = () => api<PurchaseRow[]>('/purchases').then(setRows).catch((e) => showToast((e as Error).message, 'bad'));
-  useEffect(() => { void load(); }, []);
+  // فلاتر القائمة — تُطبق على الخادم
+  const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
+  const [supplierId, setSupplierId] = useState('');
+  const [branchId, setBranchId] = useState('');
+  const [status, setStatus] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [qInput, setQInput] = useState('');
+  const [q, setQ] = useState('');
+  const [nonce, setNonce] = useState(0);
 
-  const act = async (id: string, status: 'pending' | 'received', payments: { accountCode: string; amountAgora: number }[] = []) => {
+  useEffect(() => {
+    api<{ id: string; name: string }[]>('/parties/suppliers').then(setSuppliers).catch(() => undefined);
+    api<{ id: string; name: string }[]>('/org/branches').then(setBranches).catch(() => undefined);
+    auditEvent('view', 'purchases');
+  }, []);
+
+  const query = useMemo(() => {
+    const p = new URLSearchParams();
+    if (supplierId) p.set('supplierId', supplierId);
+    if (branchId) p.set('branchId', branchId);
+    if (status) p.set('status', status);
+    if (from) p.set('from', `${from}T00:00:00.000`);
+    if (to) p.set('to', `${to}T23:59:59.999`);
+    if (q.trim()) p.set('q', q.trim());
+    return p.toString();
+  }, [supplierId, branchId, status, from, to, q]);
+
+  const load = () => api<PurchaseRow[]>(`/purchases?${query}`)
+    .then((r) => setRows([...r].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))))
+    .catch((e) => showToast((e as Error).message, 'bad'));
+  useEffect(() => { void load(); }, [query, nonce]);
+
+  const act = async (id: string, st: 'pending' | 'received', payments: { accountCode: string; amountAgora: number }[] = []) => {
     try {
-      const res = await api<any>(`/purchases/${id}/status`, { method: 'POST', body: { status, payments } });
-      showToast(status === 'received' ? `استُلمت — الإجمالي ${money(res.totals.grandTotalAgora)}، ذمة: ${money(res.remainderAgora)}` : 'أُعيدت إلى قيد الانتظار (لم تُستلم بعد)');
+      const res = await api<any>(`/purchases/${id}/status`, { method: 'POST', body: { status: st, payments } });
+      showToast(st === 'received' ? `استُلمت — الإجمالي ${money(res.totals.grandTotalAgora)}، ذمة: ${money(res.remainderAgora)}` : 'أُعيدت إلى قيد الانتظار (لم تُستلم بعد)');
       load();
     } catch (e) { showToast((e as Error).message, 'bad'); }
   };
@@ -37,6 +79,24 @@ export function Purchases() {
     setReceiving(null);
   };
 
+  // الأحدث أولاً ثم الأقدم (الخادم يرتب كذلك — هذا ترتيب وقائي في العرض)
+  const visibleRows = useMemo(
+    () => [...(rows ?? [])].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)),
+    [rows],
+  );
+
+  const toCsvRow = (r: PurchaseRow) => ({
+    'تاريخ الإضافة': dtShort(r.createdAt),
+    'المرجع': r.refNo ?? r.id.slice(0, 8),
+    'المورد': r.supplier.name,
+    'الفرع': r.branch?.name ?? '—',
+    'الأسطر': r.lines.length,
+    'الإجمالي': r.totals ? money(r.totals.grandTotalAgora) : '—',
+    'المدفوع': money(r.totals?.paidAgora ?? 0),
+    'الذمة': r.status === 'received' && r.totals ? money(r.totals.remainderAgora) : '—',
+    'الحالة': STATUS_AR[r.status]?.label ?? r.status,
+  });
+
   return (
     <div className="card full">
       {toast}
@@ -44,30 +104,83 @@ export function Purchases() {
         <h2>المشتريات — الأثر المخزني والمحاسبي عند الاستلام فقط</h2>
         <button className="btn" onClick={() => setCreating(true)}>+ فاتورة شراء</button>
       </div>
+
+      <div className="row2">
+        <Field label="المورد">
+          <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+            <option value="">كل الموردين</option>
+            {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+        <Field label="الفرع">
+          <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+            <option value="">كل الفروع</option>
+            {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+        </Field>
+        <Field label="الحالة">
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="">كل الحالات</option>
+            <option value="ordered">طلبية</option>
+            <option value="pending">معلقة</option>
+            <option value="received">مستلمة</option>
+          </select>
+        </Field>
+        <Field label="من تاريخ"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+        <Field label="إلى تاريخ"><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+        <Field label="بحث">
+          <input
+            placeholder="رقم مرجعي أو اسم مورد"
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') setQ(qInput); }}
+          />
+        </Field>
+        <button className="btn secondary" onClick={() => setQ(qInput)}>بحث</button>
+        {visibleRows.length > 0 && <CsvButton filename="purchases.csv" rows={visibleRows.map(toCsvRow)} />}
+        <button className="btn secondary" onClick={() => setNonce((n) => n + 1)}>تحديث</button>
+      </div>
+
       <div className="table-scroll">
       <table className="grid">
-        <thead><tr><th>مرجع</th><th>المورد</th><th>أسطر</th><th>ضريبة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+        <thead>
+          <tr>
+            <th>مرجع</th><th>تاريخ الإضافة</th><th>المورد</th><th>الفرع</th><th>أسطر</th>
+            <th>الإجمالي</th><th>المدفوع</th><th>الذمة</th><th>الحالة</th><th>إجراءات</th>
+          </tr>
+        </thead>
         <tbody>
-          {rows.map((p) => (
-            <tr key={p.id}>
-              <td className="mono">{p.refNo ?? p.id.slice(0, 8)}</td>
-              <td>{p.supplier.name}</td>
-              <td>{p.lines.length}</td>
-              <td><Money agora={p.taxAgora} /></td>
-              <td><Badge tone={p.status === 'received' ? 'ok' : 'warn'}>{p.status === 'received' ? 'مستلمة' : p.status === 'pending' ? 'معلقة' : 'طلبية'}</Badge></td>
-              <td className="actions">
-                <button className="btn secondary small" onClick={() => navigate(`/purchases/${p.id}`)}>تفاصيل</button>
-                {p.status === 'ordered' && <button className="btn secondary small" onClick={() => act(p.id, 'pending')}>تعليق</button>}
-                {p.status !== 'received' && (
-                  <button className="btn small" onClick={() => setReceiving({ id: p.id, ref: p.refNo ?? p.id.slice(0, 8), amount: 0, code: sources[0]?.code ?? '1000' })}>استلام + دفع</button>
-                )}
-              </td>
-            </tr>
-          ))}
-          {rows.length === 0 && <tr><td colSpan={6}>لا توجد فواتير شراء</td></tr>}
+          {visibleRows.map((p) => {
+            const st = STATUS_AR[p.status] ?? { label: p.status, tone: 'warn' as const };
+            const paid = p.payments.reduce((s, x) => s + x.amountAgora, 0);
+            return (
+              <tr key={p.id}>
+                <td className="mono">{p.refNo ?? p.id.slice(0, 8)}</td>
+                <td>{dtShort(p.createdAt)}</td>
+                <td>{p.supplier.name}</td>
+                <td>{p.branch?.name ?? '—'}</td>
+                <td>{p.lines.length}</td>
+                <td>{p.totals ? <Money agora={p.totals.grandTotalAgora} /> : '—'}</td>
+                <td><Money agora={paid} /></td>
+                <td>{p.status === 'received' ? <Money agora={Math.max(0, (p.totals?.grandTotalAgora ?? 0) - paid)} /> : '—'}</td>
+                <td><Badge tone={st.tone}>{st.label}</Badge></td>
+                <td className="actions">
+                  <button className="btn secondary small" onClick={() => navigate(`/purchases/${p.id}`)}>تفاصيل</button>
+                  {p.status === 'ordered' && <button className="btn secondary small" onClick={() => act(p.id, 'pending')}>تعليق</button>}
+                  {p.status !== 'received' && (
+                    <button className="btn small" onClick={() => setReceiving({ id: p.id, ref: p.refNo ?? p.id.slice(0, 8), amount: 0, code: sources[0]?.code ?? '1000' })}>استلام + دفع</button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+          {rows && rows.length === 0 && <tr><td colSpan={10}>لا توجد فواتير شراء في النطاق المحدد</td></tr>}
+          {!rows && <tr><td colSpan={10}>جارٍ التحميل...</td></tr>}
         </tbody>
       </table>
       </div>
+      <p className="muted">{rows ? `${rows.length} فاتورة — مرتبة من الأحدث إلى الأقدم` : ''}</p>
+
       {receiving && (
         <Modal title={`استلام ${receiving.ref} + دفع`} onClose={() => setReceiving(null)}>
           <Field label="المدفوع الآن (0 = آجل)"><SplitAgora agora={receiving.amount} label="المدفوع الآن" onAgora={(v) => setReceiving({ ...receiving, amount: v })} /></Field>
@@ -92,31 +205,80 @@ interface DraftLine {
   uid: string; variantId: string | null; label: string;
   qty: number; unitCostAgora: number; lineDiscountAgora: number;
 }
+/** دفعة عند الحفظ والاستلام — من الصندوق أو حساب بنكي (كود GL) */
+interface DraftPay { uid: string; code: string; amountAgora: number }
 
 let draftLineSeq = 0;
+let draftPaySeq = 0;
 const newDraftLine = (): DraftLine => ({ uid: `pl-${++draftLineSeq}`, variantId: null, label: '', qty: 1, unitCostAgora: 0, lineDiscountAgora: 0 });
+const newDraftPay = (code: string): DraftPay => ({ uid: `pay-${++draftPaySeq}`, code, amountAgora: 0 });
+
+/** توزيع مبلغ على أوزان بالتناسب (largest remainder) — مطابق للخادم */
+function allocateProRata(total: number, weights: number[]): number[] {
+  const sum = weights.reduce((s, w) => s + w, 0);
+  if (sum === 0) return weights.map(() => 0);
+  const exact = weights.map((w) => (w * total) / sum);
+  const floors = exact.map((x) => Math.floor(x));
+  let remainder = total - floors.reduce((s, x) => s + x, 0);
+  const order = exact.map((x, i) => ({ i, frac: x - Math.floor(x) })).sort((a, b) => b.frac - a.frac);
+  for (const { i } of order) {
+    if (remainder <= 0) break;
+    floors[i] += 1;
+    remainder -= 1;
+  }
+  return floors;
+}
+
+/** نفس ترتيب الحساب الملزم في الخادم: خصم السطر ← توزيع خصم الفاتورة بالتناسب ← الضريبة بعد الخصومات */
+function computeDraftTotals(lines: DraftLine[], discountAgora: number, taxBps: number) {
+  const gross = lines.map((l) => l.qty * l.unitCostAgora);
+  const afterLine = lines.map((l, i) => Math.max(0, gross[i] - l.lineDiscountAgora));
+  const subtotal = afterLine.reduce((s, x) => s + x, 0);
+  const shares = allocateProRata(Math.min(discountAgora, subtotal), afterLine);
+  const rows = lines.map((l, i) => {
+    const taxable = afterLine[i] - shares[i];
+    return { taxable, tax: Math.round((taxable * taxBps) / 10000) };
+  });
+  const inventoryTotalAgora = rows.reduce((s, r) => s + r.taxable, 0);
+  const taxTotalAgora = rows.reduce((s, r) => s + r.tax, 0);
+  return { inventoryTotalAgora, taxTotalAgora, grandTotalAgora: inventoryTotalAgora + taxTotalAgora };
+}
 
 function NewPurchase({ onClose, onDone, showToast }: { onClose: () => void; onDone: () => void; showToast: (m: string, t?: 'ok' | 'bad') => void }) {
   const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [supplierId, setSupplierId] = useState('');
+  const [branchId, setBranchId] = useState('');
   const [refNo, setRefNo] = useState('');
+  const [notes, setNotes] = useState('');
   const [discountAgora, setDiscount] = useState(0);
   const [taxBps, setTaxBps] = useState(0);
   const [lines, setLines] = useState<DraftLine[]>([newDraftLine()]);
-  const [payAgora, setPay] = useState(0);
-  const [branchId, setBranchId] = useState('');
+  const [pays, setPays] = useState<DraftPay[]>([]);
   const [saving, setSaving] = useState(false);
+  const { sources } = usePaySources(true);
 
   useEffect(() => {
     api<any[]>('/parties/suppliers').then((s) => {
       setSuppliers(s);
       if (s[0]) setSupplierId(s[0].id);
     });
-    api<any[]>('/org/branches').then((bs) => { if (bs[0]) setBranchId(bs[0].id); }).catch(() => undefined);
+    api<any[]>('/org/branches').then((bs) => {
+      setBranches(bs);
+      if (bs[0]) setBranchId(bs[0].id);
+    }).catch(() => undefined);
   }, []);
+
+  const totals = useMemo(() => computeDraftTotals(lines, discountAgora, taxBps), [lines, discountAgora, taxBps]);
+  const paidTotal = pays.reduce((s, p) => s + p.amountAgora, 0);
+  const remainder = Math.max(0, totals.grandTotalAgora - paidTotal);
+  const overpay = paidTotal > totals.grandTotalAgora;
+  const firstCode = sources[0]?.code ?? '1000';
 
   const patchLine = (uid: string, patch: Partial<DraftLine>) =>
     setLines((prev) => prev.map((l) => (l.uid === uid ? { ...l, ...patch } : l)));
+  const patchPay = (uid: string, patch: Partial<DraftPay>) =>
+    setPays((prev) => prev.map((p) => (p.uid === uid ? { ...p, ...patch } : p)));
 
   const pickVariant = (uid: string) => (o: VariantOption | null) =>
     setLines((prev) => prev.map((l) => {
@@ -127,40 +289,77 @@ function NewPurchase({ onClose, onDone, showToast }: { onClose: () => void; onDo
       return { ...l, variantId: o.variantId, label: o.label, unitCostAgora: cost };
     }));
 
-  const submit = async () => {
-    if (lines.some((l) => !l.variantId)) { showToast('اختر الصنف في كل سطر (بحث بالاسم أو SKU أو الباركود)', 'bad'); return; }
-    if (!lines.length) { showToast('أضف سطراً واحداً على الأقل', 'bad'); return; }
+  const addRemainderPay = () => {
+    if (remainder <= 0) return;
+    setPays((prev) => [...prev, { ...newDraftPay(firstCode), amountAgora: remainder }]);
+  };
+
+  const validate = (receiveNow: boolean): string | null => {
+    if (!supplierId) return 'اختر المورد';
+    if (!lines.length || lines.some((l) => !l.variantId)) return 'اختر الصنف في كل سطر (بحث بالاسم أو SKU أو الباركود)';
+    if (receiveNow) {
+      if (pays.some((p) => p.amountAgora < 0)) return 'مبلغ الدفعة غير صالح';
+      if (overpay) return 'إجمالي الدفعات أكبر من إجمالي الفاتورة';
+    }
+    return null;
+  };
+
+  const submit = async (receiveNow: boolean) => {
+    const err = validate(receiveNow);
+    if (err) { showToast(err, 'bad'); return; }
     setSaving(true);
     try {
-      await api('/purchases', {
+      const created = await api<{ id: string }>('/purchases', {
         method: 'POST',
         body: {
-          supplierId, refNo: refNo || undefined, discountAgora, taxRateBps: taxBps,
+          branchId: branchId || undefined, supplierId, refNo: refNo || undefined, notes: notes || undefined,
+          discountAgora, taxRateBps: taxBps,
           lines: lines.map((l) => ({ variantId: l.variantId!, qty: l.qty, unitCostAgora: l.unitCostAgora, lineDiscountAgora: l.lineDiscountAgora })),
         },
       });
-      showToast('أُنشئت فاتورة الشراء (طلبية)');
+      if (!receiveNow) {
+        showToast('أُنشئت فاتورة الشراء (طلبية) — الأثر المخزني والمحاسبي عند الاستلام');
+        onDone();
+        return;
+      }
+      const payments = pays.filter((p) => p.amountAgora > 0).map((p) => ({ accountCode: p.code, amountAgora: p.amountAgora }));
+      try {
+        const res = await api<any>(`/purchases/${created.id}/status`, { method: 'POST', body: { status: 'received', payments } });
+        showToast(`استُلمت — الإجمالي ${money(res.totals.grandTotalAgora)}، ذمة: ${money(res.remainderAgora)}`);
+      } catch (e) {
+        // الفاتورة أُنشئت فعلاً — لا نكرر الإنشاء؛ يُمكن الاستلام لاحقاً من القائمة
+        showToast(`أُنشئت الفاتورة (طلبية) لكن تعذّر الاستلام: ${(e as Error).message}`, 'bad');
+      }
       onDone();
     } catch (e) { showToast((e as Error).message, 'bad'); } finally { setSaving(false); }
   };
 
   return (
     <div>
-      {lines.length > 0 && <button className="btn" style={{ position: 'fixed', top: 80, insetInlineEnd: 30, zIndex: 60 }} disabled={saving} onClick={submit}>{saving ? 'جارٍ الحفظ...' : `حفظ فاتورة الشراء (${lines.length})`}</button>}
       <div className="modal-backdrop" onClick={onClose}>
-        <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
           <div className="modal-head"><h3>فاتورة شراء جديدة</h3><button className="btn secondary" onClick={onClose}>✕</button></div>
           <div className="modal-body">
-            <Field label="المورد *">
-              <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </Field>
             <div className="row2">
+              <Field label="المورد *">
+                <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+                  {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </Field>
+              <Field label="الفرع">
+                <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+                  {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </Field>
               <Field label="رقم مرجعي"><input value={refNo} onChange={(e) => setRefNo(e.target.value)} /></Field>
-              <Field label="خصم فاتورة"><SplitAgora agora={discountAgora} onAgora={setDiscount} label="خصم فاتورة" /></Field>
-              <Field label="ضريبة (نقطة أساس)"><input type="number" value={taxBps} onChange={(e) => setTaxBps(Number(e.target.value))} /></Field>
+              <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
             </div>
+            <div className="row2">
+              <Field label="خصم فاتورة"><SplitAgora agora={discountAgora} onAgora={setDiscount} label="خصم فاتورة" /></Field>
+              <Field label="ضريبة (نقطة أساس)" hint="1600 = 16٪ — تُحسب بعد الخصومات"><input type="number" value={taxBps} onChange={(e) => setTaxBps(Number(e.target.value) || 0)} /></Field>
+            </div>
+
+            <h4>الأسطر</h4>
             {lines.map((l) => (
               <div className="row2 purchase-line" key={l.uid}>
                 <VariantPicker
@@ -175,8 +374,37 @@ function NewPurchase({ onClose, onDone, showToast }: { onClose: () => void; onDo
               </div>
             ))}
             <button className="btn secondary" onClick={() => setLines((prev) => [...prev, newDraftLine()])}>+ سطر</button>
-            <Field label="المدفوع عند الاستلام"><SplitAgora agora={payAgora} onAgora={setPay} label="المدفوع عند الاستلام" /></Field>
+
+            <div className="purchase-totals">
+              <div><span>إجمالي المخزون (قبل الضريبة)</span><Money agora={totals.inventoryTotalAgora} /></div>
+              <div><span>الضريبة ({taxBps / 100}%)</span><Money agora={totals.taxTotalAgora} /></div>
+              <div className="grand"><span>الإجمالي</span><Money agora={totals.grandTotalAgora} className="grand" /></div>
+              <div><span>إجمالي الدفعات</span><Money agora={paidTotal} /></div>
+              <div><span>{remainder > 0 ? 'الذمة المتبقية (آجل)' : 'مسددة بالكامل'}</span><Money agora={remainder} /></div>
+            </div>
+            {overpay && <p className="alert bad">إجمالي الدفعات أكبر من إجمالي الفاتورة — صحّح المبالغ قبل الحفظ</p>}
+
+            <h4>الدفعات — نقد / بنك / حسابات</h4>
+            <p className="muted">تُسجَّل الدفعات وتُرحَّل محاسبياً مع الاستلام الفوري. دون دفعات تُحفظ الفاتورة آجلة بالكامل (ذمة على المورد).</p>
+            {pays.map((p) => (
+              <div className="pay-row" key={p.uid}>
+                <select value={p.code} onChange={(e) => patchPay(p.uid, { code: e.target.value })} aria-label="حساب الدفع">
+                  {sources.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
+                </select>
+                <SplitAgora agora={p.amountAgora} label="مبلغ الدفعة" onAgora={(v) => patchPay(p.uid, { amountAgora: v })} />
+                <button className="btn secondary small" onClick={() => setPays((prev) => prev.filter((x) => x.uid !== p.uid))}>✕</button>
+              </div>
+            ))}
+            <div className="row2">
+              <button className="btn secondary" onClick={() => setPays((prev) => [...prev, newDraftPay(firstCode)])}>+ إضافة دفعة</button>
+              <button className="btn secondary" disabled={remainder <= 0} onClick={addRemainderPay}>دفع المتبقي كاملاً</button>
+            </div>
+
             <p className="muted">ابحث عن الصنف بالاسم أو SKU أو امسح الباركود — يُضاف فوراً عند تطابق الباركود. دفع جزئي والباقي ذمة تلقائياً.</p>
+          </div>
+          <div className="modal-foot">
+            <button className="btn secondary" disabled={saving} onClick={() => void submit(false)}>{saving ? 'جارٍ الحفظ...' : 'حفظ كطلبية'}</button>
+            <button className="btn" disabled={saving || overpay} onClick={() => void submit(true)}>{saving ? 'جارٍ الحفظ...' : 'حفظ واستلام + دفع'}</button>
           </div>
         </div>
       </div>

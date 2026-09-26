@@ -8,8 +8,16 @@ export class PurchasesController {
 
   @Get()
   @RequirePerm('purchases.view')
-  list(@CurrentUser() u: AuthUser, @Query('branchId') branchId?: string, @Query('status') status?: string, @Query('supplierId') supplierId?: string) {
-    return this.purchases.list(u.tenantId, { branchId, status, supplierId });
+  list(
+    @CurrentUser() u: AuthUser,
+    @Query('branchId') branchId?: string,
+    @Query('status') status?: string,
+    @Query('supplierId') supplierId?: string,
+    @Query('q') q?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.purchases.list(u.tenantId, { branchId, status, supplierId, q, from, to });
   }
 
   @Get(':id')

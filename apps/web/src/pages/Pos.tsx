@@ -69,10 +69,10 @@ export function Pos() {
     if (sessions.length && !sessions.some((s) => s.id === activeId)) setActiveId(sessions[0].id);
   }, [sessions, activeId]);
 
-  // عند الدخول للصفحة: التركيز مباشرة على خانة بحث اسم/SKU/باركود
+  // عند الدخول للصفحة وعند التنقل بين الفواتير المفتوحة: التركيز على خانة بحث اسم/SKU/باركود
   useEffect(() => {
     searchRef.current?.focus();
-  }, []);
+  }, [activeId]);
 
   useEffect(() => {
     api<any>('/org/branches').then((bs) => {
@@ -180,8 +180,6 @@ export function Pos() {
     const s = newSession();
     setSessions((ss) => [...ss, s]);
     setActiveId(s.id);
-    // فاتورة الزبون الجديد: إعادة التركيز على خانة البحث نفسها
-    searchRef.current?.focus();
   };
 
   const closeSession = (id: string) => {

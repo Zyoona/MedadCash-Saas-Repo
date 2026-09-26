@@ -346,6 +346,17 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
 .modal-head h3 { margin: 0; }
 .modal-body { padding: 16px; }
 .modal-body h4 { margin: 16px 0 6px; color: var(--accent); }
+/* تذييل النافذة — أزرار الحفظ ظاهرة دائماً أسفل النافذة مهما طال المحتوى */
+.modal-foot {
+  position: sticky; bottom: 0; z-index: 5;
+  display: flex; gap: 8px; justify-content: flex-end; align-items: center; flex-wrap: wrap;
+  padding: 12px 16px; background: var(--panel); border-top: 1px solid var(--border);
+}
+/* صفوف دفعات فاتورة الشراء (نقد/بنك) — أعمدة مرنة داخل نافذة عريضة */
+.modal .pay-row { gap: 8px; margin: 6px 0; }
+.modal .pay-row select { flex: 2; min-width: 240px; height: 42px; }
+.modal .pay-row .split-agora { flex: 1; min-width: 180px; }
+.modal .pay-row .split-agora .split-shekels { flex: 1; width: auto; height: 40px; }
 
 .toast { position: fixed; bottom: 24px; inset-inline-start: 24px; background: var(--panel); border-radius: var(--radius); padding: 12px 18px; font-weight: 700; z-index: 900; box-shadow: var(--shadow-lg); max-width: min(560px, calc(100vw - 48px)); font-size: 14.5px; line-height: 1.8; cursor: pointer; word-break: break-word; }
 .toast.ok { border: 1px solid var(--accent); color: var(--accent); }
