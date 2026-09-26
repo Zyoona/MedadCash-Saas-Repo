@@ -119,6 +119,7 @@ export function Reports() {
     }
     return [...byMonth.entries()].map(([k, v]) => ({ label: k, ...v }));
   }, [data]);
+  const chartMonthly = !!data && data.byDay.length > 62;
   const chartMax = Math.max(1, ...chart.map((c) => Math.abs(c.profitAgora)));
 
   const empty = data && data.byDay.length === 0 && data.invoicesCount === 0 && data.expenses.length === 0;
@@ -220,7 +221,7 @@ export function Reports() {
 
           {chart.length > 0 && (
             <>
-              <h4>الربح عبر الفترة {chart[0].label.length > 6 ? '(شهرياً)' : '(يومياً)'}</h4>
+              <h4>الربح عبر الفترة {chartMonthly ? '(شهرياً)' : '(يومياً)'}</h4>
               <div className="rpt-chart" role="img" aria-label="رسم بياني للربح">
                 {chart.map((c) => (
                   <div
