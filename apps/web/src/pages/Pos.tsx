@@ -17,7 +17,7 @@ interface SearchRes {
   unitMatch: { id: string; barcode: string | null; product: { id: string; name: string; imageUrl: string | null; thumbUrl: string | null; branchData: { price: string }[] } }[];
 }
 interface CartLine { productId: string; variantId: string | null; name: string; imageUrl: string | null; thumbUrl: string | null; qty: number; priceAgora: number; lineDiscountAgora: number }
-interface Payment { method: string; accountCode: string; amountAgora: number }
+interface Payment { method: string; accountCode: string; amountAgora: number; payerName?: string; payerAccount?: string }
 interface Customer { id: string; name: string; isCashDefault: boolean }
 /** وردية الكاشير المفتوحة + مطابقة الصندوق الحية (المتوقع من دفتر الأستاذ: درج العهدة أو حركة الفرع) */
 interface ShiftInfo { id: string; openedAt: string; openingAmountAgora: number }
@@ -39,7 +39,7 @@ interface PrintedInvoice {
   id: string; refNo: string | null; createdAt: string; invoiceDiscountAgora: number; totalAgora: number;
   customer: { id: string; name: string }; branch: { id: string; name: string };
   lines: { id: string; qty: number; unitPriceAgora: number; lineDiscountAgora: number; invoiceDiscountShareAgora: number; taxAgora: number; netAgora: number; variant?: { name: string; product?: { name: string } } | null }[];
-  payments: { id: string; method: string; accountCode: string; amountAgora: number }[];
+  payments: { id: string; method: string; accountCode: string; amountAgora: number; payerName?: string | null; payerAccount?: string | null }[];
 }
 
 export function Pos() {
@@ -379,7 +379,7 @@ export function Pos() {
                     <select value={p.method} onChange={(e) => {
                       const m = METHODS.find((m) => m.method === e.target.value)!;
                       const code = m.method === 'bank' ? defaultBankCode : m.accountCode;
-                      patchPayments((ps) => ps.map((x, j) => j === i ? { ...x, method: m.method, accountCode: code } : x));
+                      patchPayments((ps) => ps.map((x, j) => j === i ? { ...x, method: m.method, accountCode: code, payerName: undefined, payerAccount: undefined } : x));
                     }}>
                       {METHODS.map((m) => <option key={m.method} value={m.method}>{m.label}</option>)}
                     </select>
@@ -390,6 +390,22 @@ export function Pos() {
                     )}
                     <SplitAgora agora={p.amountAgora} label={`الدفعة ${i + 1}`} allowNegative onAgora={(v) => patchPayments((ps) => ps.map((x, j) => j === i ? { ...x, amountAgora: v } : x))} />
                     <button className="btn secondary small" onClick={() => patchPayments((ps) => ps.filter((_, j) => j !== i))}>✕</button>
+                    {p.method !== 'cash' && (
+                      <div className="pay-row-payer">
+                        <input
+                          className="pay-payer-name"
+                          placeholder="اسم صاحب الحساب (اختياري)"
+                          value={p.payerName ?? ''}
+                          onChange={(e) => patchPayments((ps) => ps.map((x, j) => j === i ? { ...x, payerName: e.target.value || undefined } : x))}
+                        />
+                        <input
+                          className="pay-payer-account"
+                          placeholder="رقم الحساب / الشيك (اختياري)"
+                          value={p.payerAccount ?? ''}
+                          onChange={(e) => patchPayments((ps) => ps.map((x, j) => j === i ? { ...x, payerAccount: e.target.value || undefined } : x))}
+                        />
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -482,7 +498,11 @@ function PrintInvoiceModal({ invoiceId, onClose }: { invoiceId: string; onClose:
               <div><span>الإجمالي</span><strong>{money(detail.totalAgora)}</strong></div>
               {detail.payments.map((p) => (
                 <div key={p.id}>
-                  <span>{methodAr(p.method)}{p.amountAgora < 0 ? ' (إرجاع باقي)' : ''}</span>
+                  <span>
+                    {methodAr(p.method)}{p.amountAgora < 0 ? ' (إرجاع باقي)' : ''}
+                    {p.payerName ? ` — ${p.payerName}` : ''}
+                    {p.payerAccount ? ` [${p.payerAccount}]` : ''}
+                  </span>
                   <span>{money(p.amountAgora)}</span>
                 </div>
               ))}

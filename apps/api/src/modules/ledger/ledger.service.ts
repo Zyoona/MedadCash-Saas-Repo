@@ -55,6 +55,8 @@ export interface PostEntry {
   sourceId: string;
   memo?: string;
   reversesEntryId?: string;
+  payerName?: string | null;    // اسم صاحب الحوالة/الشيك — للمراجعة (اختياري)
+  payerAccount?: string | null; // رقم الحساب أو رقم الشيك — للمراجعة (اختياري)
   lines: PostLine[];
 }
 
@@ -132,6 +134,8 @@ export class LedgerService {
           sourceId: input.sourceId,
           memo: input.memo,
           reversesEntryId: input.reversesEntryId ?? null,
+          payerName: input.payerName ?? null,
+          payerAccount: input.payerAccount ?? null,
           lines: {
             create: input.lines.map((l) => ({
               accountId: byCode.get(l.accountCode)!.id,

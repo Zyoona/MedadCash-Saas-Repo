@@ -26,8 +26,8 @@ export class PartiesController {
 
   @Post('customers/:id/collect')
   @RequirePerm('parties.manage')
-  collect(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: { accountCode: string; amountAgora: number; date?: string; memo?: string; branchId?: string }) {
-    return this.parties.collectFromCustomer(u.tenantId, b.branchId ?? u.branchId ?? '', { customerId: id, accountCode: b.accountCode, amountAgora: b.amountAgora, date: b.date, memo: b.memo }, u.userId);
+  collect(@CurrentUser() u: AuthUser, @Param('id') id: string, @Body() b: { accountCode: string; amountAgora: number; date?: string; memo?: string; branchId?: string; payerName?: string; payerAccount?: string }) {
+    return this.parties.collectFromCustomer(u.tenantId, b.branchId ?? u.branchId ?? '', { customerId: id, accountCode: b.accountCode, amountAgora: b.amountAgora, date: b.date, memo: b.memo, payerName: b.payerName, payerAccount: b.payerAccount }, u.userId);
   }
 
   @Get('customers/:id/statement')

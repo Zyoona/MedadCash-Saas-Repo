@@ -7,7 +7,7 @@ interface Party { id: string; name: string; phone: string | null; balanceAgora: 
 
 interface CollectResult { entryId: string; balanceBeforeAgora: number; balanceAfterAgora: number; overpaidAgora: number; creditBalanceAgora: number; warning: string | null }
 
-interface StatementRow { entryId: string; date: string; sourceType: string; sourceId: string; memo: string | null; debitAgora: number; creditAgora: number; balanceAgora: number }
+interface StatementRow { entryId: string; date: string; sourceType: string; sourceId: string; memo: string | null; payerName: string | null; payerAccount: string | null; debitAgora: number; creditAgora: number; balanceAgora: number }
 interface StatementData { customer: { id: string; name: string }; balanceAgora: number; rows: StatementRow[] }
 
 interface AgingRow { customerId: string; name: string; debtAgora: number; b0_30Agora: number; b31_60Agora: number; b61_90Agora: number; b90plusAgora: number; oldestInvoiceDays: number | null }
@@ -54,7 +54,7 @@ function PartyBalance({ balanceAgora }: { balanceAgora: number }) {
 function CustomersTab() {
   const [rows, setRows] = useState<Party[]>([]);
   const [form, setForm] = useState({ name: '', phone: '', openingBalanceAgora: 0, creditLimitAgora: 0, paymentTerms: '' });
-  const [collect, setCollect] = useState<{ id: string; name: string; amount: number; code: string; date: string; memo: string; debt: number } | null>(null);
+  const [collect, setCollect] = useState<{ id: string; name: string; amount: number; code: string; date: string; memo: string; debt: number; payerName: string; payerAccount: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [stmt, setStmt] = useState<StatementData | null>(null);
   const { sources } = usePaySources(true);
@@ -82,7 +82,14 @@ function CustomersTab() {
     try {
       const res = await api<CollectResult>(`/parties/customers/${collect.id}/collect`, {
         method: 'POST',
-        body: { accountCode: collect.code, amountAgora: collect.amount, date: collect.date, memo: collect.memo || undefined },
+        body: {
+          accountCode: collect.code,
+          amountAgora: collect.amount,
+          date: collect.date,
+          memo: collect.memo || undefined,
+          payerName: collect.payerName || undefined,
+          payerAccount: collect.payerAccount || undefined,
+        },
       });
       const src = sources.find((s) => s.code === collect.code)?.label ?? collect.code;
       let msg = `تم التحصيل من ${collect.name} — ${src}`;
@@ -133,7 +140,7 @@ function CustomersTab() {
               <td>{c.creditLimitAgora ? money(c.creditLimitAgora) : '—'}</td>
               <td>
                 {!c.isCashDefault && (
-                  <button className="btn secondary small" onClick={() => setCollect({ id: c.id, name: c.name, amount: 0, code: sources[0]?.code ?? '1000', date: today(), memo: '', debt: c.balanceAgora })}>تحصيل</button>
+                  <button className="btn secondary small" onClick={() => setCollect({ id: c.id, name: c.name, amount: 0, code: sources[0]?.code ?? '1000', date: today(), memo: '', debt: c.balanceAgora, payerName: '', payerAccount: '' })}>تحصيل</button>
                 )}{' '}
                 <button className="btn secondary small" onClick={() => void openStatement(c.id)}>كشف حساب</button>
               </td>
@@ -155,10 +162,20 @@ function CustomersTab() {
             <SplitAgora agora={collect.amount} onAgora={(agora) => setCollect({ ...collect, amount: agora })} label="المبلغ" />
           </Field>
           <Field label="يُقبض في">
-            <select value={collect.code} onChange={(e) => setCollect({ ...collect, code: e.target.value })}>
+            <select value={collect.code} onChange={(e) => setCollect({ ...collect, code: e.target.value, payerName: '', payerAccount: '' })}>
               {sources.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
             </select>
           </Field>
+          {collect.code !== '1000' && (
+            <>
+              <Field label="اسم صاحب الحساب (اختياري)">
+                <input placeholder="الاسم كما هو في الحوالة/الشيك" value={collect.payerName} onChange={(e) => setCollect({ ...collect, payerName: e.target.value })} />
+              </Field>
+              <Field label="رقم الحساب / الشيك (اختياري)">
+                <input placeholder="رقم الحساب البنكي أو رقم الشيك" value={collect.payerAccount} onChange={(e) => setCollect({ ...collect, payerAccount: e.target.value })} />
+              </Field>
+            </>
+          )}
           <Field label="التاريخ"><input type="date" value={collect.date} onChange={(e) => setCollect({ ...collect, date: e.target.value })} /></Field>
           <Field label="ملاحظة (اختياري)"><input placeholder="ملاحظة" value={collect.memo} onChange={(e) => setCollect({ ...collect, memo: e.target.value })} /></Field>
           <button className="btn wide" onClick={doCollect} disabled={busy || collect.amount <= 0}>{busy ? 'جارٍ التنفيذ…' : 'تنفيذ التحصيل'}</button>
@@ -178,12 +195,14 @@ function CustomersTab() {
             ? <p className="muted">لا حركات على ذمة هذا العميل</p>
             : (
               <table className="grid">
-                <thead><tr><th>التاريخ</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead>
+                <thead><tr><th>التاريخ</th><th>البيان</th><th>صاحب الحساب</th><th>رقم الحساب/الشيك</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead>
                 <tbody>
                   {stmt.rows.map((r) => (
                     <tr key={r.entryId}>
                       <td>{new Date(r.date).toLocaleDateString('ar')}</td>
                       <td>{sourceTypeAr(r.sourceType)}{r.memo ? ` — ${r.memo}` : ''}</td>
+                      <td>{r.payerName ?? '—'}</td>
+                      <td>{r.payerAccount ?? '—'}</td>
                       <td>{r.debitAgora > 0 ? <Money agora={r.debitAgora} /> : '—'}</td>
                       <td>{r.creditAgora > 0 ? <Money agora={r.creditAgora} /> : '—'}</td>
                       <td><PartyBalance balanceAgora={r.balanceAgora} /></td>
@@ -194,7 +213,7 @@ function CustomersTab() {
             )}
           <CsvButton
             filename={`statement-${stmt.customer.name}.csv`}
-            rows={stmt.rows.map((r) => ({ التاريخ: new Date(r.date).toLocaleDateString('ar'), البيان: `${sourceTypeAr(r.sourceType)}${r.memo ? ' — ' + r.memo : ''}`, مدين: r.debitAgora, دائن: r.creditAgora, الرصيد: r.balanceAgora }))}
+            rows={stmt.rows.map((r) => ({ التاريخ: new Date(r.date).toLocaleDateString('ar'), البيان: `${sourceTypeAr(r.sourceType)}${r.memo ? ' — ' + r.memo : ''}`, 'صاحب الحساب': r.payerName ?? '', 'رقم الحساب/الشيك': r.payerAccount ?? '', مدين: r.debitAgora, دائن: r.creditAgora, الرصيد: r.balanceAgora }))}
           />
         </Modal>
       )}

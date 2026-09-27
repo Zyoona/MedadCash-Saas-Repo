@@ -34,6 +34,8 @@ export interface PaymentInput {
   method: string; // cash | bank | check | credit
   accountCode: string;
   amountAgora: number; // negative = إرجاع باقي بطريقة مختلفة (§4 row 8)
+  payerName?: string | null;    // اسم صاحب الحساب/الشيك — للمراجعة (اختياري)
+  payerAccount?: string | null; // رقم الحساب أو رقم الشيك — للمراجعة (اختياري)
 }
 
 @Injectable()
@@ -207,7 +209,13 @@ export class SalesService {
             })),
           },
           payments: {
-            create: input.payments.map((p) => ({ method: p.method, accountCode: p.accountCode, amount: agoraToDec(p.amountAgora) })),
+            create: input.payments.map((p) => ({
+              method: p.method,
+              accountCode: p.accountCode,
+              amount: agoraToDec(p.amountAgora),
+              payerName: p.payerName ?? null,
+              payerAccount: p.payerAccount ?? null,
+            })),
           },
         },
       });

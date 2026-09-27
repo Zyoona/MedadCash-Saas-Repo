@@ -119,7 +119,7 @@ export class PartiesService {
    * حساب القبض يجب أن يكون حساب أصول غير مغلق.
    * الدفع الزائد مسموح عمداً: الفائض يبقى رصيداً دائناً (مستحقاً) للعميل مع تحذير لا يمنع العملية.
    */
-  async collectFromCustomer(tenantId: string, branchId: string, input: { customerId: string; accountCode: string; amountAgora: number; date?: string; memo?: string }, actorId: string) {
+  async collectFromCustomer(tenantId: string, branchId: string, input: { customerId: string; accountCode: string; amountAgora: number; date?: string; memo?: string; payerName?: string | null; payerAccount?: string | null }, actorId: string) {
     if (!Number.isInteger(input.amountAgora) || input.amountAgora <= 0) throw new BadRequestException('مبلغ غير صالح');
     const c = await this.prisma.customer.findFirst({ where: { id: input.customerId, tenantId, deletedAt: null } });
     if (!c) throw new NotFoundException('العميل غير موجود');
@@ -138,6 +138,8 @@ export class PartiesService {
         tenantId, branchId, fiscalYearId: fy.id, date,
         sourceType: 'collection', sourceId: c.id,
         memo: input.memo ?? `تحصيل من ${c.name}`,
+        payerName: input.payerName ?? null,
+        payerAccount: input.payerAccount ?? null,
         lines: [
           { accountCode: input.accountCode, debitAgora: input.amountAgora, creditAgora: 0 },
           { accountCode: AR, debitAgora: 0, creditAgora: input.amountAgora, customerId: c.id },
@@ -163,7 +165,7 @@ export class PartiesService {
       where: { entry: { tenantId }, account: { code: AR }, customerId },
       select: {
         debit: true, credit: true, memo: true,
-        entry: { select: { id: true, date: true, createdAt: true, sourceType: true, sourceId: true, memo: true } },
+        entry: { select: { id: true, date: true, createdAt: true, sourceType: true, sourceId: true, memo: true, payerName: true, payerAccount: true } },
       },
     });
     const sorted = [...lines].sort((a, b) =>
@@ -181,6 +183,8 @@ export class PartiesService {
         sourceType: l.entry.sourceType,
         sourceId: l.entry.sourceId,
         memo: l.memo ?? l.entry.memo ?? null,
+        payerName: l.entry.payerName ?? null,
+        payerAccount: l.entry.payerAccount ?? null,
         debitAgora,
         creditAgora,
         balanceAgora: run,

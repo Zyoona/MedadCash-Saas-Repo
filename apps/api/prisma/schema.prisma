@@ -342,7 +342,9 @@ model JournalEntry {
   sourceId        String
   memo            String?
   reversesEntryId String?
-  createdAt       DateTime   @default(now())
+  payerName       String?  // اسم صاحب الحوالة/الشيك — للمراجعة (اختياري)
+  payerAccount    String?  // رقم الحساب أو رقم الشيك — للمراجعة (اختياري)
+  createdAt       DateTime @default(now())
 
   lines JournalLine[]
 
@@ -463,13 +465,15 @@ model InvoiceLine {
 }
 
 model InvoicePayment {
-  id          String   @id @default(uuid())
-  invoiceId   String
-  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
-  method      String   // cash | bank | check | credit
-  accountCode String
-  amount      Decimal  @db.Decimal(18, 2) // negative = change returned in different method
-  createdAt   DateTime @default(now())
+  id           String   @id @default(uuid())
+  invoiceId    String
+  invoice      Invoice  @relation(fields: [invoiceId], references: [id])
+  method       String   // cash | bank | check | credit
+  accountCode  String
+  amount       Decimal  @db.Decimal(18, 2) // negative = change returned in different method
+  payerName    String?  // اسم صاحب الحساب/الشيك — للمراجعة (اختياري)
+  payerAccount String?  // رقم الحساب أو رقم الشيك — للمراجعة (اختياري)
+  createdAt    DateTime @default(now())
 
   @@map("invoice_payments")
 }

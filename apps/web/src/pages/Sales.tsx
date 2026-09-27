@@ -22,7 +22,7 @@ interface InvoiceDetail {
   customer: { id: string; name: string }; branch: { id: string; name: string };
   shift: { id: string; openedAt: string } | null;
   lines: InvoiceLineFull[];
-  payments: { id: string; method: string; accountCode: string; amountAgora: number }[];
+  payments: { id: string; method: string; accountCode: string; amountAgora: number; payerName?: string | null; payerAccount?: string | null }[];
   returned: { variantId: string; qty: number }[];
   totalAgora: number;
 }
@@ -271,16 +271,18 @@ function InvoiceDetailModal({ detail, onClose }: { detail: InvoiceDetail; onClos
       </div>
       <h4>الدفعات</h4>
       <table className="grid">
-        <thead><tr><th>الطريقة</th><th>الحساب</th><th>المبلغ</th></tr></thead>
+        <thead><tr><th>الطريقة</th><th>الحساب</th><th>صاحب الحساب</th><th>رقم الحساب/الشيك</th><th>المبلغ</th></tr></thead>
         <tbody>
           {detail.payments.map((p) => (
             <tr key={p.id}>
               <td>{methodAr(p.method)}{p.amountAgora < 0 ? ' (إرجاع باقي)' : ''}</td>
               <td className="mono">{p.accountCode}</td>
+              <td>{p.payerName ?? '—'}</td>
+              <td className="mono">{p.payerAccount ?? '—'}</td>
               <td><Money agora={p.amountAgora} /></td>
             </tr>
           ))}
-          {detail.payments.length === 0 && <tr><td colSpan={3}>لا دفعات — فاتورة آجلة</td></tr>}
+          {detail.payments.length === 0 && <tr><td colSpan={5}>لا دفعات — فاتورة آجلة</td></tr>}
         </tbody>
       </table>
     </Modal>

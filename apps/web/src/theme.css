@@ -566,9 +566,12 @@ input[type="checkbox"]:focus-visible { outline: 2px solid rgba(22, 163, 74, 0.55
 .pos-pay .totals div { display: flex; justify-content: space-between; font-size: 13px; }
 .pos-pay .totals .grand { font-size: 17px; font-weight: 800; color: var(--accent); }
 .pos-pays { flex: 1; min-height: 0; overflow: auto; }
-.pay-row { display: flex; gap: 6px; margin: 4px 0; }
+.pay-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
 .pay-row select { flex: 1; min-width: 0; height: 36px; padding: 4px 8px; }
 .pay-row input:not(.split-cents) { width: 110px; height: 36px; padding: 4px 8px; }
+.pay-row-payer { display: flex; gap: 6px; width: 100%; padding-inline-start: 4px; }
+.pay-payer-name { flex: 2; min-width: 0; height: 32px; padding: 4px 8px; font-size: 0.82rem; opacity: 0.85; }
+.pay-payer-account { flex: 1; min-width: 0; height: 32px; padding: 4px 8px; font-size: 0.82rem; opacity: 0.85; font-family: monospace; }
 .pos-pay-actions { margin: 6px 0 0; }
 .pos-pay-actions .btn { flex: 1; height: 36px; padding: 6px 10px; }
 .pos-pay .btn.wide { margin-top: auto; height: 42px; }
