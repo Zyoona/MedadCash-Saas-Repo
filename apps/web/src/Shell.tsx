@@ -5,9 +5,9 @@ import { Calculator, useLiveClock } from './ui.js';
 import { RouteLoaderOverlay } from './Loader.js';
 import { getTheme, toggleTheme, type Theme } from './theme.js';
 
-const NAV: { to: string; label: string; perm: string }[] = [
+const NAV: { to: string; label: string; perm: string; featured?: boolean }[] = [
   { to: '/', label: 'الرئيسية', perm: 'dashboard.view' },
-  { to: '/pos', label: 'الكاشير (POS)', perm: 'pos.view' },
+  { to: '/pos', label: 'الكاشير (POS)', perm: 'pos.view', featured: true },
   { to: '/sales', label: 'المبيعات', perm: 'pos.view' },
   { to: '/inventory', label: 'المخزون', perm: 'inventory.view' },
   { to: '/purchases', label: 'المشتريات', perm: 'purchases.view' },
@@ -85,7 +85,7 @@ export function Shell() {
       <div className="layout">
         <nav className="sidenav">
           {NAV.filter((n) => can(n.perm)).map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === '/'}>
+            <NavLink key={n.to} to={n.to} end={n.to === '/'} className={n.featured ? 'pos-entry' : undefined}>
               {n.label}
             </NavLink>
           ))}

@@ -6,11 +6,12 @@
 #    WindowStyle: 7 (مصغّر بدون تفعيل) — يمنع ومضة النافذة السوداء
 #
 #  التسلسل: splash أولاً (تفتح في المتصفح فوراً) → تهيئة خفيفة → PG →
-#  .env → migrations (بصمة) → API+Web بالتوازي عبر cmd /c start
-#  (الخادمان يعملان في نوافذ مخفية — بلا ومضة console ولا تجمّد للجلسة الأم).
+#  .env → migrations (بصمة) → API+Web بالتوازي عبر CreateNoWindow
+#  (الخادمان بلا أي نافذة console — لا ومضة ولا أيقونة في شريط المهام ولا تجمّد للجلسة الأم).
 #
-#  قاعدة VBS: لا نستخدم VBS للإخفاء إطلاقاً.
-#  powershell -WindowStyle Hidden + cmd /c start "" ... هو المنهج الوحيد.
+#  قاعدة VBS: لا نستخدم VBS للإخفاء إطلاقاً، ولا `start "" /min`
+#  (الـ /min يترك نافذة مصغّرة مرئية في شريط المهام).
+#  المنهج الوحيد: powershell -WindowStyle Hidden + ProcessStartInfo.CreateNoWindow.
 # ============================================================
 #Requires -Version 5.1
 
@@ -67,12 +68,21 @@ function Wait-ForPort([int]$port, [string]$label, [int]$tries, [int]$everyMs) {
   return $false
 }
 
-# بدء عملية خلفية مخفية تماماً (المنهج المعتمد — لا VBS)
+# بدء عملية خلفية بلا أي نافذة (المنهج المعتمد — لا VBS ولا start /min):
+# System.Diagnostics.Process مع CreateNoWindow + WindowStyle.Hidden لا يُنشئ
+# أي نافذة console أصلاً — لا ومضة، ولا زر في شريط المهام، ولا نافذة مصغّرة.
+# (start "" /min ممنوع: يترك نافذة cmd مصغّرة ظاهرة في الشريط.)
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
 function Start-Hidden([string]$command, [string]$logName) {
   $logPath = Join-Path $logs $logName
-  $inner = 'cmd /d /s /c "{0} >> ""{1}"" 2>&1"' -f $command, $logPath
-  $p = Start-Process -FilePath "$env:ComSpec" -ArgumentList @('/d', '/s', '/c', ('start "" /min ' + $inner)) `
-    -WorkingDirectory $root -WindowStyle Hidden -PassThru
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = "$env:ComSpec"
+  $psi.Arguments = '/d /s /c "{0} >> ""{1}"" 2>&1"' -f $command, $logPath
+  $psi.WorkingDirectory = $root
+  $psi.CreateNoWindow = $true
+  $psi.UseShellExecute = $false
+  $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+  $p = [System.Diagnostics.Process]::Start($psi)
   return $p
 }
 
@@ -82,7 +92,7 @@ Write-Log 'launch.log' ("[{0}] === launch ===" -f (Get-Date -Format 'yyyy-MM-dd 
 # ---------- 1) فحص الثنائيات الحرجة قبل أي شيء (قاعدة الحجم — 0 بايت = تالف/مُفرَّغ من Defender) ----------
 $npmCli = Join-Path $root '_tools\node\node_modules\npm\bin\npm-cli.js'
 $esbuildDir = Join-Path $root 'node_modules\@esbuild\win32-x64'
-$esbuildBin = Join-Path $esbuildDir 'bin\esbuild.exe'
+$esbuildBin = Join-Path $esbuildDir 'esbuild.exe'
 $ok = $true
 if (-not (Test-ExeOk $nodeExe 50MB))   { Write-Log 'launch.log' 'node.exe missing or gutted (<50MB) — run Fix_Defender.bat, then npm install.'; $ok = $false }
 if (-not (Test-Path -LiteralPath $npmCli)) { Write-Log 'launch.log' 'npm-cli.js missing — _tools\node is incomplete, reinstall it.'; $ok = $false }
@@ -134,10 +144,17 @@ if ($needGen) {
 
 # ---------- 5) PostgreSQL (فحص حجم ثنائياته أولاً — نسخة مُفرَّغة من Defender) ----------
 $pgBin = Join-Path $root 'node_modules\@embedded-postgres\windows-x64\native\bin'
-if (-not (Test-ExeOk (Join-Path $pgBin 'postgres.exe') 5MB)) {
-  Write-Log 'launch.log' 'postgres.exe missing or gutted — run Fix_Defender.bat, then npm install.'
-  exit 1
+if ((-not (Test-ExeOk (Join-Path $pgBin 'postgres.exe') 5MB)) -or (-not (Test-ExeOk (Join-Path $pgBin 'pg_ctl.exe') 50KB))) {
+  Write-Log 'launch.log' 'PostgreSQL binaries missing or gutted — reinstalling platform package...'
+  try { Remove-Item -LiteralPath (Join-Path $root 'node_modules\@embedded-postgres\windows-x64') -Recurse -Force -ErrorAction Stop } catch {}
+  & $env:ComSpec /d /s /c "npm install @embedded-postgres/windows-x64 --no-save --offline >> ""$logs\prisma.log"" 2>&1"
+  if ((-not (Test-ExeOk (Join-Path $pgBin 'postgres.exe') 5MB)) -or (-not (Test-ExeOk (Join-Path $pgBin 'pg_ctl.exe') 50KB))) {
+    Write-Log 'launch.log' 'PostgreSQL still broken — run Fix_Defender.bat first (Defender deletes the binaries).'
+    exit 1
+  }
 }
+# ملاحظة: حزمة windows-x64 لا تشحن initdb.exe — التهيئة الأولى تتم عبر embedded-postgres
+# (pg-local.js setup) الذي يستخرج/يبني ما يلزم، لا عبر initdb مباشر.
 & $env:ComSpec /d /s /c "node _tools\pg-run.js status >nul 2>&1"
 if ($LASTEXITCODE -ne 0) {
   & $env:ComSpec /d /s /c "node _tools\pg-run.js start >> ""$logs\pg-start.log"" 2>&1"

@@ -48,6 +48,14 @@ function dueBadge(t: Task): { tone: 'ok' | 'warn' | 'bad'; label: string } {
   return { tone: 'ok', label: `باقي ${daysWord(d)}` };
 }
 
+function BoltIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z" />
+    </svg>
+  );
+}
+
 export function Dashboard() {
   const { can } = useAuth();
   const [s, setS] = useState<Summary | null>(null);
@@ -96,7 +104,15 @@ export function Dashboard() {
       <div className="card">
         <div className="row-between">
           <h2>لوحة اليوم</h2>
-          <button className="btn secondary" onClick={load}>تحديث</button>
+          <div className="actions">
+            {can('pos.view') && (
+              <Link className="btn pos-shortcut" to="/pos" title="فتح شاشة الكاشير">
+                <BoltIcon />
+                فتح الكاشير
+              </Link>
+            )}
+            <button className="btn secondary" onClick={load}>تحديث</button>
+          </div>
         </div>
         <div className="kpi-row">
           <div className="kpi"><div className="label">مبيعات اليوم</div><div className="value">{money(s.todaySalesAgora)}</div></div>
