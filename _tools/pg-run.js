@@ -1,7 +1,6 @@
 // Persistent local Postgres runner: keeps running (no auto-shutdown).
-// Launches postgres.exe inside a hidden console (via pg-launch.vbs) so that all
-// of its child processes (checkpointer, bgwriter, io_worker, ...) share that
-// hidden console instead of each opening its own visible console window.
+// Starts the cluster via pg_ctl.exe directly (no VBS launcher): pg_ctl
+// detaches the postmaster itself, so no hidden console tricks are needed.
 const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -13,8 +12,8 @@ const BIN = path.join(ROOT, 'node_modules', '@embedded-postgres', 'windows-x64',
 const DATA = path.join(ROOT, '_tools', 'pgsql', 'data');
 const LOG = path.join(ROOT, '_tools', 'pgsql', 'postgres.log');
 const POSTMASTER_PID = path.join(DATA, 'postmaster.pid');
-const LAUNCHER = path.join(__dirname, 'pg-launch.vbs');
 const PG_CTL = path.join(BIN, 'pg_ctl.exe');
+const INITDB = path.join(BIN, 'initdb.exe');
 const PORT = '5433';
 
 const cmd = process.argv[2] || 'start';
@@ -106,13 +105,17 @@ if (cmd === 'start') {
     if (!fs.existsSync(path.dirname(LOG))) fs.mkdirSync(path.dirname(LOG), { recursive: true });
     if (!fs.existsSync(LOG)) fs.writeFileSync(LOG, '');
   } catch (e) {}
-  const res = spawnSync('wscript.exe', [LAUNCHER, PG_CTL, DATA, PORT, LOG], {
+  const res = spawnSync(PG_CTL, ['start', '-D', DATA, '-o', `-p ${PORT}`, '-l', LOG, '-w'], {
     stdio: 'ignore',
     windowsHide: true,
-    timeout: 10000
+    timeout: 60000
   });
   if (res.error) {
-    console.error('[pg] failed to launch postgres:', res.error.message);
+    console.error('[pg] failed to start postgres via pg_ctl:', res.error.message);
+    process.exit(1);
+  }
+  if (res.status !== 0) {
+    console.error('[pg] pg_ctl start exited with code ' + res.status + ' — see ' + LOG);
     process.exit(1);
   }
   console.log('[pg] postgres start requested, port=' + PORT);
